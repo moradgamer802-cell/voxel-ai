@@ -661,6 +661,30 @@ def raw_key():
                     for _ in range(3):
                         read_char()
                     return ""
+                if k == "<":
+                    btn = ""
+                    while True:
+                        c = read_char()
+                        if not c:
+                            return ""
+                        if c == ";":
+                            break
+                        btn += c
+                    while True:
+                        c = read_char()
+                        if not c:
+                            return ""
+                        if c in ("M", "m"):
+                            break
+                    try:
+                        b = int(btn)
+                    except ValueError:
+                        return ""
+                    if b == 64:
+                        return "WHEEL_UP"
+                    if b == 65:
+                        return "WHEEL_DOWN"
+                    return ""
                 while True:
                     b = read_char()
                     if not b or b in CSI_FINAL_CHARS:
@@ -737,6 +761,7 @@ class UI:
         self.popup_idx = 0
         self.palette = False
         self.palette_idx = 0
+        self.scroll_off = 0
         self._inbuf = ""
         self.spin = "⠋"
         self._draw_lock = threading.Lock()
@@ -748,7 +773,7 @@ class UI:
 
     def enter(self):
         global BB_TERM_RAW
-        sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
+        sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000h\x1b[?1006h")
         sys.stdout.flush()
         self._old_termios = None
         if termios and sys.stdin.isatty():
@@ -799,7 +824,7 @@ class UI:
             except Exception:
                 pass
             BB_TERM_RAW = False
-        sys.stdout.write("\x1b[?25h\x1b[?1049l")
+        sys.stdout.write("\x1b[?25h\x1b[?1000l\x1b[?1006l\x1b[?1049l")
         sys.stdout.flush()
 
     def notice(self, label, text):
@@ -859,6 +884,8 @@ class UI:
             return "  " + C_ACC + bar + C_RESET + "  " + C_MUTED + "[Esc] Interrupt · [Ctrl+P] Commands" + C_RESET
         if self.route == "home":
             return "  " + C_MUTED + "↑/↓ Navigate · Enter Open · Type = New Chat · [Ctrl+P] Commands" + C_RESET
+        if self.scroll_off > 0:
+            return "  " + C_MUTED + "[↓ Newer] swipe down / wheel · [Ctrl+P] Commands" + C_RESET
         parts = ["[Enter] Send"]
         if self.buf.startswith("/"):
             parts.append("[Tab] Complete")
@@ -877,7 +904,7 @@ class UI:
         return out
 
     def frame_home(self, W, H):
-        lines = [self.hdr("voxel", "v3.5.3 · " + self.model, W)]
+        lines = [self.hdr("voxel", "v3.5.4 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -957,8 +984,12 @@ class UI:
             body += self.palette_card(W)
         body_max = max(1, H - 3)
         if len(body) > body_max:
-            body = body[-body_max:]
+            max_scroll = len(body) - body_max
+            self.scroll_off = max(0, min(self.scroll_off, max_scroll))
+            start = len(body) - body_max - self.scroll_off
+            body = body[start:len(body) - self.scroll_off]
         else:
+            self.scroll_off = 0
             body += [""] * (body_max - len(body))
         lines += body
         lines.append(self.prompt_line(W))
@@ -1078,6 +1109,12 @@ class UI:
         if self.palette:
             self.key_palette(k)
             return
+        if k in ("WHEEL_UP", "WHEEL_DOWN"):
+            self.scroll_off += 4 if k == "WHEEL_UP" else -4
+            self.scroll_off = max(0, self.scroll_off)
+            self.redraw()
+            return
+        self.scroll_off = 0
         if k == "ENTER":
             text = self.buf
             if text.strip():
@@ -1342,11 +1379,20 @@ class UI:
                 else:
                     arg = (tcontent or attrs.get("path") or "").strip()
                     tool_content = arg
-                self.notes.append(C_YELLOW + f"⚙ {name}: {arg}" + C_RESET)
+                note_idx = len(self.notes)
+                self.notes.append(C_YELLOW + "⚙ " + name + ": " + truncate(arg, 50) + C_RESET)
                 self.redraw()
                 res = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs)
                 results.append(f"[tool {name}: {res}]")
-                self.notes.append(C_DIM + truncate(res, 1200) + C_RESET)
+                code_m = re.search(r"exit=(-?\d+)", res)
+                ok = not code_m or code_m.group(1) == "0"
+                inner = res.split("]\n", 1)[1] if "]\n" in res else ""
+                first_line = inner.split("[/Tool", 1)[0].strip().split("\n", 1)[0][:60] if inner.strip() else ""
+                if ok:
+                    self.notes[note_idx] = C_GREEN + "✓ " + name + ": " + truncate(arg, 50) + C_RESET
+                else:
+                    self.notes[note_idx] = (C_RED + "✗ " + name + ": " + truncate(arg, 50)
+                                            + (" — " + first_line if first_line else "") + C_RESET)
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
@@ -1398,7 +1444,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.3" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.4" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
