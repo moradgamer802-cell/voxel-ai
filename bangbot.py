@@ -63,6 +63,7 @@ Kono kaj korar dorkar hole, khali text diye korte jaibe na - ei tags use korbe:
 Rules:
 - Root dorkar hote pare (su permission chai) — tahole <run root> use koro, user approve korbe.
 - Phone e root na thakle <run root> kaj korbe na — tahole normal vabe kaj koro ar user ke bolo root lagbe.
+- Permission prompt ele user 1/2/3/4 diye decide korbe — 3=sob-somoy allow, 4=kokhono-na.
 - Ekbare ekta tag use koro, result ashle tarpor aro kaj lagle abar tag use korbe.
 - command chalano te warning/error thakle seta user ke bolo.
 - 'termux-*' command available ache (termux-api installed thakle).
@@ -277,25 +278,25 @@ def perm_rule(cfg, category, key):
     return cfg.get("perm", {}).get("default_" + category, "ask")
 
 
-def ask_permission(kind, detail):
+def ask_permission(kind, key):
     print()
-    print(C_YELLOW + f"[permission] {kind}: {detail}" + C_RESET)
+    print("│  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET)
+    print("│  " + C_BOLD + key + C_RESET)
+    print("│  " + C_DIM + "1=ekbar   2=na   3=sob-somoy   4=kokhono-na   (Enter=1)" + C_RESET)
     while True:
         try:
-            ans = input(C_YELLOW + "[y]es [n]o [s]ession-allow [a]lways-allow [d]eny-always > " + C_RESET).strip().lower()
+            ans = input("│  > ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             return "deny_once"
-        if ans in ("y", "yes", ""):
+        if ans in ("1", "y", "yes", ""):
             return "allow_once"
-        if ans in ("n", "no"):
+        if ans in ("2", "n", "no"):
             return "deny_once"
-        if ans in ("s", "session"):
-            return "allow_session"
-        if ans in ("a", "always"):
+        if ans in ("3", "a", "always"):
             return "always"
-        if ans in ("d", "deny"):
+        if ans in ("4", "d", "never"):
             return "deny_always"
-        print(C_DIM + "(y/n/s/a/d)" + C_RESET)
+        print("│  " + C_DIM + "1/2/3/4 likhun" + C_RESET)
 
 
 def check_perm(cfg, category, key, session_perm):
@@ -332,16 +333,16 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             return "[Tool run: user denied]"
         if wants_root and not shutil.which("su"):
             return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]"
-        print(C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET, flush=True)
+        print("│  " + C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET, flush=True)
         code, out, shown = run_command(arg, root)
         if root:
             print(C_DIM + f"  (root mode: su -c {shlex.quote(shown)})" + C_RESET)
         if not wants_root and not cfg.get("root") and code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ) and shutil.which("su"):
-            print(C_YELLOW + "! Permission denied — root diye retry korbo? (root command e permission lagbe)" + C_RESET)
+            print("│  " + C_YELLOW + "! Permission denied — root diye try korbo?" + C_RESET)
             if check_perm(cfg, "rootcmd", arg, session_perm):
-                print(C_DIM + "* root diye retry korchi..." + C_RESET)
+                print("│  " + C_DIM + "* root diye retry korchi..." + C_RESET)
                 code, out, _ = run_command(arg, True)
                 return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]"
         return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]"
@@ -577,8 +578,9 @@ def help_text():
         "  /exit            quit",
         "",
         "AI tools (AI nije use korbe):",
-        "  run/read/write/ls/search - permission prompt asbe, y/n/s/a/d diye decide koro",
-        "  Root dorkar: AI <run root> tag use korbe, ar permission denied holeo auto-retry korbe",
+        "  run/read/write/ls/search - permission prompt: 1=ekbar 2=na 3=sob-somoy 4=kokhono-na",
+        "  /perm diye rule set: /perm cmd add 'rm' deny | /perm rootcmd add 'mount' always",
+        "  Root dorkar: AI <run root> tag use korbe, permission denied holeo auto-retry",
         "Multi-line: line er seshe '\\' dile continue hobe.",
     ])
 
@@ -655,7 +657,7 @@ def main():
 
     W = term_w()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    notices = [("SYS", "Hello! VOXEL AI ready. /help diye commands dekhun. AI command/file kaj korle permission prompt asbe (y/n/s/a/d).")]
+    notices = [("SYS", "Hello! VOXEL AI ready. /help diye commands dekhun.\nAI kaj korle permission prompt asbe: 1=ekbar 2=na 3=sob-somoy 4=kokhono-na")]
     session_perm = {"cmd": set(), "file": set()}
     loaded_name = None
     last_dt = "-"

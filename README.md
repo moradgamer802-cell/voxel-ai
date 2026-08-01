@@ -35,9 +35,9 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
   - `<run root>command</run>` — root (su) command
   - `<read path="/path">x</read>` / `<write path="/path">content</write>`
   - `<ls>dir</ls>` / `<search>query</search>`
-- **Permission system** — AI kono kaj korar age prompt ashe:
-  - `y` = allow once | `n` = deny | `s` = allow session | `a` = always allow | `d` = deny always
-  - Rules: `/perm cmd add 'rm' deny`, `/perm rootcmd add 'mount' always`
+- **Permission system** — AI kono kaj korar age simple prompt ashe:
+  - `1` = ekbar allow | `2` = na | `3` = sob-somoy allow | `4` = kokhono-na (Enter = 1)
+  - Rules: `/perm cmd add 'rm' deny`, `/perm rootcmd add 'mount' always`, `/perm cmd always` (default)
 - **Root support** — rooted phone e `su -c` diye system-level kaj; non-rooted phone e automatic normal mode
 - **Auto model fallback** — rate limit/error hole onno free model e automatic switch
 - **Session manager** — `/save`, `/load`, `/sessions`, `/rm` + auto-save
