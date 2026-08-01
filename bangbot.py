@@ -25,6 +25,12 @@ try:
 except ImportError:
     readline = None
 
+try:
+    import termios
+    import tty
+except ImportError:
+    termios = tty = None
+
 CONFIG_DIR = os.path.expanduser("~/.bangbot")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 CHATS_DIR = os.path.join(CONFIG_DIR, "chats")
@@ -63,7 +69,8 @@ Kono kaj korar dorkar hole, khali text diye korte jaibe na - ei tags use korbe:
 Rules:
 - Root dorkar hote pare (su permission chai) — tahole <run root> use koro, user approve korbe.
 - Phone e root na thakle <run root> kaj korbe na — tahole normal vabe kaj koro ar user ke bolo root lagbe.
-- Permission prompt ele user 1/2/3/4 diye decide korbe — 3=sob-somoy allow, 4=kokhono-na.
+- <search> always allowed — internet search kono permission chara cholbe (default capability).
+- <read>/<ls> o default allowed (read-only). <write>/<run> e prompt asbe: Yes/No/Always (arrow diye select).
 - Ekbare ekta tag use koro, result ashle tarpor aro kaj lagle abar tag use korbe.
 - command chalano te warning/error thakle seta user ke bolo.
 - 'termux-*' command available ache (termux-api installed thakle).
@@ -278,14 +285,59 @@ def perm_rule(cfg, category, key):
     return cfg.get("perm", {}).get("default_" + category, "ask")
 
 
+def render_opts(idx, options):
+    parts = []
+    for i, o in enumerate(options):
+        if i == idx:
+            parts.append(C_BOLD + "\x1b[7m" + " " + o + " " + C_RESET)
+        else:
+            parts.append(" " + o + " ")
+    sys.stdout.write("\r" + " " * 50 + "\r│  > " + "  ".join(parts))
+    sys.stdout.flush()
+
+
 def ask_permission(kind, key):
+    options = ["Yes", "No", "Always"]
     print()
     print("│  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET)
     print("│  " + C_BOLD + key + C_RESET)
-    print("│  " + C_DIM + "1=ekbar   2=na   3=sob-somoy   4=kokhono-na   (Enter=1)" + C_RESET)
+    if termios and sys.stdin.isatty():
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        idx = 0
+        render_opts(idx, options)
+        try:
+            tty.setraw(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch == "\x1b":
+                    seq = sys.stdin.read(2)
+                    if seq == "[C":
+                        idx = (idx + 1) % len(options)
+                        render_opts(idx, options)
+                    elif seq == "[D":
+                        idx = (idx - 1) % len(options)
+                        render_opts(idx, options)
+                elif ch in ("\r", "\n"):
+                    break
+                elif ch in "123":
+                    idx = int(ch) - 1
+                    if idx < len(options):
+                        render_opts(idx, options)
+                        break
+                elif ch in ("q", "Q", "\x03"):
+                    idx = -1
+                    break
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        if idx == -1:
+            return "deny_once"
+        return ("allow_once", "deny_once", "always")[idx]
     while True:
         try:
-            ans = input("│  > ").strip().lower()
+            ans = input("│  > 1=Yes 2=No 3=Always (Enter=1): ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             return "deny_once"
         if ans in ("1", "y", "yes", ""):
@@ -294,17 +346,16 @@ def ask_permission(kind, key):
             return "deny_once"
         if ans in ("3", "a", "always"):
             return "always"
-        if ans in ("4", "d", "never"):
-            return "deny_always"
-        print("│  " + C_DIM + "1/2/3/4 likhun" + C_RESET)
 
 
-def check_perm(cfg, category, key, session_perm):
-    """Returns True if allowed. May prompt user. May mutate cfg for 'always' rules."""
+def check_perm(cfg, category, key, session_perm, prompt=True):
+    """Returns True if allowed. prompt=False -> read-only ops auto-allow (deny rule thakle block)."""
     mode = perm_rule(cfg, category, key)
     if mode == "deny":
         return False
     if mode == "always" or key in session_perm.get(category, set()):
+        return True
+    if not prompt:
         return True
     label = {"cmd": "run command", "rootcmd": "run command (ROOT)", "file": "file op"}.get(category, category)
     decision = ask_permission(label, key)
@@ -348,7 +399,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
         return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]"
 
     if name == "ls":
-        if not check_perm(cfg, "file", arg, session_perm):
+        if not check_perm(cfg, "file", arg, session_perm, prompt=False):
             return "[Tool ls: user denied]"
         try:
             entries = sorted(os.listdir(arg))
@@ -358,7 +409,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
         return f"[Tool ls {arg}]\n{truncate(listing)}\n[/Tool ls]"
 
     if name == "read":
-        if not check_perm(cfg, "file", arg, session_perm):
+        if not check_perm(cfg, "file", arg, session_perm, prompt=False):
             return "[Tool read: user denied]"
         try:
             with open(arg, "rb") as f:
@@ -380,7 +431,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]"
 
     if name == "search":
-        print(C_DIM + f"* searching: {content}" + C_RESET, flush=True)
+        print("│  " + C_DIM + f"🔎 searching: {content}" + C_RESET, flush=True)
         try:
             res = ddg_search(content)
         except Exception as e:
@@ -439,62 +490,64 @@ def wrap_text(text, width):
     return lines
 
 
-def bubble_lines(label, color, text, w):
-    out = [color + label + C_RESET]
-    wrapped = wrap_text(text, w - 2) if text else ["(empty)"]
-    out.append("┌" + "─" * (w - 2) + "┐")
-    for ln in wrapped:
-        pad = max(0, w - 2 - len(ln))
-        out.append("│ " + ln + " " * pad + " │")
-    out.append("└" + "─" * (w - 2) + "┘")
-    return out
-
-
 def render(cfg, model, root_on, messages, notices, status, W):
     inner = W - 2
-    cell = W - 6
     out = [CLEAR]
-    title = " VOXEL AI "
+    title = " VOXEL AI v3.2 "
     out.append(C_CYAN + "┌─" + title + "─" * max(1, inner - len(title) - 3) + "┐" + C_RESET)
-    h2 = f" {model} | free models | root:{'ON' if root_on else 'OFF'} "
+    h2 = f" [● {model}] | [Path: {short_path()}] | root:{'ON' if root_on else 'OFF'} "
     out.append("│" + h2 + " " * max(0, inner - len(h2)) + "│")
     out.append("├" + "─" * inner + "┤")
-    out.append("│" + " " * inner + "│")
     for msg in messages[1:]:
         role = msg["role"]
         text = msg["content"]
         if role == "user":
-            label, color = "YOU", C_GREEN
+            label, color = "👤 You", C_GREEN
         elif role == "assistant":
-            label, color = "VOXEL AI", C_CYAN
+            label, color = "🤖 VOXEL AI", C_CYAN
         else:
             label, color = "SYS", C_YELLOW
         if text.startswith("[tool "):
-            label, color = "TOOL", C_YELLOW
-        for ln in bubble_lines(label, color, text, cell):
-            out.append("│  " + ln + "  │")
-        out.append("│" + " " * inner + "│")
+            m = re.search(r"\[tool (\w+):", text)
+            name = m.group(1) if m else "tool"
+            out.append("│  " + C_GREEN + "└─ [✓] " + name + C_RESET)
+            continue
+        width = max(20, inner - len(label) - 2)
+        first = True
+        for ln in wrap_text(text, width):
+            if first:
+                out.append("│  " + color + label + ": " + ln + C_RESET)
+                first = False
+            else:
+                out.append("│  " + " " * (len(label) + 2) + ln)
     for label, text in notices:
-        for ln in bubble_lines(label, C_YELLOW, text, cell):
-            out.append("│  " + ln + "  │")
-        out.append("│" + " " * inner + "│")
+        width = max(20, inner - len(label) - 2)
+        first = True
+        for ln in wrap_text(text, width):
+            if first:
+                out.append("│  " + C_YELLOW + label + ": " + ln + C_RESET)
+                first = False
+            else:
+                out.append("│  " + " " * (len(label) + 2) + ln)
     out.append("├" + "─" * inner + "┤")
-    st = f" {status} "
+    st = f" ⚡ {status} "
     out.append("│" + st + " " * max(0, inner - len(st)) + "│")
     out.append("├" + "─" * inner + "┤")
     sys.stdout.write("\n".join(out) + "\n")
     sys.stdout.flush()
 
 
+def short_path():
+    cwd = os.getcwd()
+    home = os.path.expanduser("~")
+    if cwd.startswith(home):
+        return "~" + cwd[len(home):]
+    return cwd
+
+
 def clr_line():
     sys.stdout.write("\r" + "\x1b[2K")
     sys.stdout.flush()
-
-
-def print_cell(text, W):
-    cell = W - 6
-    for ln in wrap_text(text, cell):
-        print("│  " + ln)
 
 
 def loading_box(W):
@@ -506,21 +559,6 @@ def loading_box(W):
 def close_stream_box(W):
     cell = W - 6
     print("│  " + "└" + "─" * (cell - 2) + "┘")
-
-
-def print_streamed(parts):
-    first_content = True
-    for kind, text in parts:
-        if kind == "reasoning":
-            print(C_DIM + text + C_RESET, end="", flush=True)
-        else:
-            if first_content:
-                print("\n" + C_DIM + "--- thinking done ---" + C_RESET + "\n")
-                first_content = False
-            print(text, end="", flush=True)
-    if first_content:
-        print(C_DIM + "(no content)" + C_RESET)
-    print()
 
 
 def list_free():
@@ -578,7 +616,8 @@ def help_text():
         "  /exit            quit",
         "",
         "AI tools (AI nije use korbe):",
-        "  run/read/write/ls/search - permission prompt: 1=ekbar 2=na 3=sob-somoy 4=kokhono-na",
+        "  search: default ON (permission chara) | read/ls: default allow",
+        "  run/write: arrow prompt (←→ Yes/No/Always, Enter confirm)",
         "  /perm diye rule set: /perm cmd add 'rm' deny | /perm rootcmd add 'mount' always",
         "  Root dorkar: AI <run root> tag use korbe, permission denied holeo auto-retry",
         "Multi-line: line er seshe '\\' dile continue hobe.",
@@ -627,10 +666,106 @@ def ai_reply(messages, model, api_key, W, root_on):
     return content, reasoning, None, used_model
 
 
+def rel_time(ts):
+    d = time.time() - ts
+    if d < 60:
+        return "now"
+    if d < 3600:
+        return f"{int(d // 60)}m ago"
+    if d < 86400:
+        return f"{int(d // 3600)}h ago"
+    return f"{int(d // 86400)}d ago"
+
+
+COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/save ", "/load ", "/sessions",
+                "/rm ", "/stats", "/perm", "/root", "/menu", "/exit"]
+
+
+def read_line(prompt, history, W, allow_esc=True):
+    """Raw-mode line editor. Returns (text, mode): send / esc / quit."""
+    buf = ""
+    hist = list(history)
+    hidx = len(hist)
+
+    def redraw():
+        disp = buf
+        if len(disp) > W - 10:
+            disp = "…" + disp[-(W - 11):]
+        sys.stdout.write("\r" + " " * (W - 4) + "\r" + prompt + disp)
+        sys.stdout.flush()
+
+    if not (termios and sys.stdin.isatty()):
+        try:
+            return input(prompt + " "), "send"
+        except (KeyboardInterrupt, EOFError):
+            return None, "quit"
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        sys.stdout.write("\r" + " " * (W - 4) + "\r" + prompt + C_DIM + "Type your command or prompt here..." + C_RESET)
+        sys.stdout.flush()
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                nxt = sys.stdin.read(1)
+                if nxt == "[":
+                    k = sys.stdin.read(1)
+                    if k == "A" and hist:
+                        hidx = max(0, hidx - 1)
+                        buf = hist[hidx]
+                    elif k == "B":
+                        hidx = min(len(hist), hidx + 1)
+                        buf = hist[hidx] if hidx < len(hist) else ""
+                    redraw()
+                elif allow_esc:
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    return buf, "esc"
+            elif ch in ("\r", "\n"):
+                if buf.endswith("\\"):
+                    buf = buf[:-1] + "\n"
+                    sys.stdout.write("\r\n")
+                    redraw()
+                    continue
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                return buf, "send"
+            elif ch in ("\x7f", "\x08"):
+                buf = buf[:-1]
+                redraw()
+            elif ch == "\x03":
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                return None, "quit"
+            elif ch == "\t":
+                for c in COMMAND_LIST:
+                    if c.startswith(buf) and c != buf:
+                        buf = c
+                        break
+                redraw()
+            elif ch.isprintable() or ord(ch) >= 160:
+                buf += ch
+                redraw()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def session_list():
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    out = []
+    for f in os.listdir(CHATS_DIR):
+        if f.endswith(".json"):
+            p = os.path.join(CHATS_DIR, f)
+            out.append((f[:-5], os.path.getmtime(p)))
+    out.sort(key=lambda x: -x[1])
+    return out
+
+
 def main():
     cfg = load_config()
     args = sys.argv[1:]
-
     if args and args[0] == "--key":
         if len(args) < 2:
             print("Usage: python3 bangbot.py --key <YOUR_API_KEY>")
@@ -657,7 +792,7 @@ def main():
 
     W = term_w()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    notices = [("SYS", "Hello! VOXEL AI ready. /help diye commands dekhun.\nAI kaj korle permission prompt asbe: 1=ekbar 2=na 3=sob-somoy 4=kokhono-na")]
+    notices = [("SYS", "Hello! VOXEL AI ready. /help diye commands dekhun.\nAI er web search default ON. run/write korle arrow prompt asbe: Yes / No / Always")]
     session_perm = {"cmd": set(), "file": set()}
     loaded_name = None
     last_dt = "-"
@@ -665,25 +800,22 @@ def main():
 
     render(cfg, model, root_on, messages, notices, status, W)
 
+    hist = []
     while True:
-        print("│ > ", end="", flush=True)
-        try:
-            line = input()
-            while line.rstrip().endswith("\\"):
-                try:
-                    more = input("│ … ")
-                except (KeyboardInterrupt, EOFError):
-                    more = ""
-                line = line.rstrip()[:-1] + "\n" + more
-            user_input = line.strip()
-        except (KeyboardInterrupt, EOFError):
-            print()
+        text, mode = read_line("│ ❯ ✍️ ", hist, W)
+        if mode == "quit":
             if len(messages) > 1:
                 save_session("last", messages)
             print(C_GREEN + "└" + "─" * (W - 3) + "┘")
             print(C_DIM + "Bye!" + C_RESET)
             break
-
+        if mode == "esc":
+            continue
+        user_input = text.strip()
+        if user_input:
+            hist.append(user_input)
+        print(C_DIM + "[Enter] Send | [Esc] Cancel | [Tab] Auto-complete | [Ctrl+C] Quit" + C_RESET)
+        print(C_GREEN + "└" + "─" * (W - 3) + "┘")
         if not user_input:
             continue
 

@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 
 ## Features
 
-- **Polished TUI (opencode-style)** — boxed border, header (model name), status bar, bordered chat bubbles, animated `⏳ thinking...` loading screen
+- **Polished TUI (opencode-style single screen)** — boxed border, header (`[● model] | [Path] | root`), inline `👤 You` / `🤖 VOXEL AI` messages, `❯ ✍️` input box with placeholder, footer shortcuts, animated `⏳ thinking...` loading screen
 - **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai
 - **Free AI models** — DeepSeek V4 Flash Free, Big Pickle, MiMo, Nemotron, etc. (OpenCode Zen)
 - **AI agent tools** — AI nijei command chalao, file read/write, folder list, web search:
@@ -35,8 +35,8 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
   - `<run root>command</run>` — root (su) command
   - `<read path="/path">x</read>` / `<write path="/path">content</write>`
   - `<ls>dir</ls>` / `<search>query</search>`
-- **Permission system** — AI kono kaj korar age simple prompt ashe:
-  - `1` = ekbar allow | `2` = na | `3` = sob-somoy allow | `4` = kokhono-na (Enter = 1)
+- **Permission system** — arrow-key prompt: `← →` Yes / No / Always, `Enter` confirm
+  - Web search: default ON (permission chara) | read/ls: default allow
   - Rules: `/perm cmd add 'rm' deny`, `/perm rootcmd add 'mount' always`, `/perm cmd always` (default)
 - **Root support** — rooted phone e `su -c` diye system-level kaj; non-rooted phone e automatic normal mode
 - **Auto model fallback** — rate limit/error hole onno free model e automatic switch
@@ -58,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 | `/stats` | Token count |
 | `/exit` | Exit |
 
-Multi-line: line er seshe `\` dile continue hobe. Up/down arrow: history.
+Multi-line: line er seshe `\` dile continue hobe. Up/down arrow: history. `Tab`: command autocomplete.
 
 ## Requirements
 
