@@ -74,7 +74,7 @@ Rules:
 - Ekbare ekta tag use koro, result ashle tarpor aro kaj lagle abar tag use korbe.
 - command chalano te warning/error thakle seta user ke bolo.
 - 'termux-*' command available ache (termux-api installed thakle).
-- Tumul own naming: always VOXEL AI bolo."""
+- Reply e nijer nam/shurur greeting (jemon "VOXEL AI bhalo achi", "ki kore help korte pari") force koro na — direct user er proshner jawab dao."""
 
 C_RED = "\033[91m"
 C_GREEN = "\033[92m"
@@ -292,15 +292,15 @@ def render_opts(idx, options):
             parts.append(C_BOLD + "\x1b[7m" + " " + o + " " + C_RESET)
         else:
             parts.append(" " + o + " ")
-    sys.stdout.write("\r" + " " * 50 + "\r│  > " + "  ".join(parts))
+    sys.stdout.write("\r" + " " * 50 + "\r  > " + "  ".join(parts))
     sys.stdout.flush()
 
 
 def ask_permission(kind, key):
     options = ["Yes", "No", "Always"]
     print()
-    print("│  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET)
-    print("│  " + C_BOLD + key + C_RESET)
+    print("  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET)
+    print("  " + C_BOLD + key + C_RESET)
     if termios and sys.stdin.isatty():
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
@@ -337,7 +337,7 @@ def ask_permission(kind, key):
         return ("allow_once", "deny_once", "always")[idx]
     while True:
         try:
-            ans = input("│  > 1=Yes 2=No 3=Always (Enter=1): ").strip().lower()
+            ans = input("  > 1=Yes 2=No 3=Always (Enter=1): ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             return "deny_once"
         if ans in ("1", "y", "yes", ""):
@@ -384,16 +384,16 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             return "[Tool run: user denied]"
         if wants_root and not shutil.which("su"):
             return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]"
-        print("│  " + C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET, flush=True)
+        print("  " + C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET, flush=True)
         code, out, shown = run_command(arg, root)
         if root:
             print(C_DIM + f"  (root mode: su -c {shlex.quote(shown)})" + C_RESET)
         if not wants_root and not cfg.get("root") and code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ) and shutil.which("su"):
-            print("│  " + C_YELLOW + "! Permission denied — root diye try korbo?" + C_RESET)
+            print("  " + C_YELLOW + "! Permission denied — root diye try korbo?" + C_RESET)
             if check_perm(cfg, "rootcmd", arg, session_perm):
-                print("│  " + C_DIM + "* root diye retry korchi..." + C_RESET)
+                print("  " + C_DIM + "* root diye retry korchi..." + C_RESET)
                 code, out, _ = run_command(arg, True)
                 return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]"
         return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]"
@@ -431,7 +431,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]"
 
     if name == "search":
-        print("│  " + C_DIM + f"🔎 searching: {content}" + C_RESET, flush=True)
+        print("  " + C_DIM + f"🔎 searching: {content}" + C_RESET, flush=True)
         try:
             res = ddg_search(content)
         except Exception as e:
@@ -491,48 +491,44 @@ def wrap_text(text, width):
 
 
 def render(cfg, model, root_on, messages, notices, status, W):
-    inner = W - 2
     out = [CLEAR]
-    title = " VOXEL AI v3.2 "
-    out.append(C_CYAN + "┌─" + title + "─" * max(1, inner - len(title) - 3) + "┐" + C_RESET)
-    h2 = f" [● {model}] | [Path: {short_path()}] | root:{'ON' if root_on else 'OFF'} "
-    out.append("│" + h2 + " " * max(0, inner - len(h2)) + "│")
-    out.append("├" + "─" * inner + "┤")
+    h1 = C_BOLD + C_CYAN + "VOXEL AI v3.3" + C_RESET
+    h2 = "  ● " + C_GREEN + model + C_RESET + "  |  " + C_DIM + short_path() + C_RESET
+    if root_on:
+        h2 += "  |  root:ON"
+    out.append("  " + h1 + h2)
+    out.append(C_DIM + "  " + "─" * max(10, W - 4) + C_RESET)
     for msg in messages[1:]:
         role = msg["role"]
         text = msg["content"]
-        if role == "user":
-            label, color = "👤 You", C_GREEN
-        elif role == "assistant":
-            label, color = "🤖 VOXEL AI", C_CYAN
-        else:
-            label, color = "SYS", C_YELLOW
         if text.startswith("[tool "):
             m = re.search(r"\[tool (\w+):", text)
-            name = m.group(1) if m else "tool"
-            out.append("│  " + C_GREEN + "└─ [✓] " + name + C_RESET)
+            out.append("  " + C_GREEN + "└─ [✓] " + (m.group(1) if m else "tool") + C_RESET)
             continue
-        width = max(20, inner - len(label) - 2)
+        if role == "user":
+            label, color = "👤 You", C_GREEN
+        else:
+            label, color = "🤖 " + model, C_CYAN
+        prefix = label + ": "
         first = True
-        for ln in wrap_text(text, width):
+        for ln in wrap_text(text, max(20, W - 8)):
             if first:
-                out.append("│  " + color + label + ": " + ln + C_RESET)
+                out.append("  " + color + prefix + ln + C_RESET)
                 first = False
             else:
-                out.append("│  " + " " * (len(label) + 2) + ln)
+                out.append("  " + " " * len(prefix) + ln)
+        out.append("")
     for label, text in notices:
-        width = max(20, inner - len(label) - 2)
         first = True
-        for ln in wrap_text(text, width):
+        for ln in wrap_text(text, max(20, W - 8)):
             if first:
-                out.append("│  " + C_YELLOW + label + ": " + ln + C_RESET)
+                out.append("  " + C_YELLOW + "[" + label + "] " + ln + C_RESET)
                 first = False
             else:
-                out.append("│  " + " " * (len(label) + 2) + ln)
-    out.append("├" + "─" * inner + "┤")
-    st = f" ⚡ {status} "
-    out.append("│" + st + " " * max(0, inner - len(st)) + "│")
-    out.append("├" + "─" * inner + "┤")
+                out.append("  " + " " * (len(label) + 4) + ln)
+        out.append("")
+    out.append(C_DIM + "  " + "─" * max(10, W - 4) + C_RESET)
+    out.append("  " + C_DIM + "⚡ " + C_RESET + status)
     sys.stdout.write("\n".join(out) + "\n")
     sys.stdout.flush()
 
@@ -548,17 +544,6 @@ def short_path():
 def clr_line():
     sys.stdout.write("\r" + "\x1b[2K")
     sys.stdout.flush()
-
-
-def loading_box(W):
-    cell = W - 6
-    print("│  " + "┌" + "─" * (cell - 2) + "┐")
-    print("│  " + "│ " + " " * (cell - 4) + " │")
-
-
-def close_stream_box(W):
-    cell = W - 6
-    print("│  " + "└" + "─" * (cell - 2) + "┘")
 
 
 def list_free():
@@ -643,24 +628,17 @@ def ai_reply(messages, model, api_key, W, root_on):
     t = threading.Thread(target=worker, daemon=True)
     t.start()
 
-    cell = W - 6
-    print("│  " + C_CYAN + "VOXEL AI" + C_RESET)
-    loading_box(W)
     i = 0
     try:
         while t.is_alive() or not result:
-            sys.stdout.write("\r│  │ ⏳ " + SPINNER[i % len(SPINNER)] + " thinking..." + C_RESET)
+            sys.stdout.write("\r  " + C_CYAN + "🤖 " + model + C_RESET + "  ⏳ " + SPINNER[i % len(SPINNER)] + " thinking...")
             sys.stdout.flush()
             i += 1
             time.sleep(0.12)
     except KeyboardInterrupt:
         clr_line()
-        print("│  │ " + C_YELLOW + "stopped" + C_RESET + " " * max(0, cell - 4 - 8) + " │")
-        close_stream_box(W)
         return "", "", "cancelled", model
     clr_line()
-    print("│  " + "│ " + C_DIM + "done ✓" + C_RESET + " " * max(0, cell - 4 - 7) + " │")
-    close_stream_box(W)
 
     err = result.get("err")
     used_model = result.get("model")
@@ -808,11 +786,10 @@ def main():
 
     hist = []
     while True:
-        text, mode = read_line("│ ❯ ✍️ ", hist, W)
+        text, mode = read_line("  ❯ ", hist, W)
         if mode == "quit":
             if len(messages) > 1:
                 save_session("last", messages)
-            print(C_GREEN + "└" + "─" * (W - 3) + "┘")
             print(C_DIM + "Bye!" + C_RESET)
             break
         if mode == "esc":
@@ -821,14 +798,12 @@ def main():
         if user_input:
             hist.append(user_input)
         print(C_DIM + "[Enter] Send | [Esc] Cancel | [Tab] Auto-complete | [Ctrl+C] Quit" + C_RESET)
-        print(C_GREEN + "└" + "─" * (W - 3) + "┘")
         if not user_input:
             continue
 
         if user_input in ("/exit", "/quit"):
             if len(messages) > 1:
                 save_session("last", messages)
-            print(C_GREEN + "└" + "─" * (W - 3) + "┘")
             print(C_DIM + "Bye! (auto-saved: last)" + C_RESET)
             break
         elif user_input == "/help":
@@ -947,14 +922,16 @@ def main():
             content, reasoning, err, used_model = ai_reply(messages, model, api_key, W, root_on)
             dt = fmt_duration(time.time() - t0)
             last_dt = dt
+            if used_model and used_model != model:
+                model = used_model
 
             if err:
                 if err == "cancelled":
-                    print(C_YELLOW + "│  cancelled" + C_RESET)
+                    print(C_YELLOW + "  cancelled" + C_RESET)
                     status = "cancelled"
                     render(cfg, model, root_on, messages, notices, status, W)
                     break
-                print(C_RED + "│  " + err + C_RESET)
+                print(C_RED + "  " + err + C_RESET)
                 messages.pop()
                 status = "error"
                 render(cfg, model, root_on, messages, notices, status, W)
@@ -979,7 +956,7 @@ def main():
                 else:
                     arg = (tcontent or attrs.get("path") or "").strip()
                     tool_content = arg
-                print("│  " + C_YELLOW + f"⚙ {name}: {arg}" + C_RESET)
+                print("  " + C_YELLOW + f"⚙ {name}: {arg}" + C_RESET)
                 res = exec_tool(cfg, name, arg, tool_content, session_perm, attrs)
                 results.append(f"[tool {name}: {res}]")
                 print(C_DIM + truncate(res, 1200) + C_RESET)

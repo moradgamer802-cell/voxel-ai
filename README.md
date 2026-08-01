@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 
 ## Features
 
-- **Polished TUI (opencode-style single screen)** — boxed border, header (`[● model] | [Path] | root`), inline `👤 You` / `🤖 VOXEL AI` messages, `❯ ✍️` input box with placeholder, footer shortcuts, animated `⏳ thinking...` loading screen
+- **Minimal user-friendly TUI** — clean header (`VOXEL AI ● model | path`), inline `👤 You` / `🤖 <model>` replies (label e model er nam dekhabe), `❯` input with placeholder, footer shortcuts, spinner loading
 - **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai
 - **Free AI models** — DeepSeek V4 Flash Free, Big Pickle, MiMo, Nemotron, etc. (OpenCode Zen)
 - **AI agent tools** — AI nijei command chalao, file read/write, folder list, web search:
