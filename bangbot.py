@@ -370,17 +370,43 @@ def check_perm(cfg, category, key, session_perm, prompt=True):
     return decision == "allow_once"
 
 
+def make_diff_lines(old, new, ctx=2):
+    """Unified diff with per-line numbers -> [(kind, old_n, new_n, text)] (kind in -,+,' ')"""
+    import difflib
+    diff = difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=ctx)
+    lines, old_n, new_n = [], 0, 0
+    for line in diff:
+        if line.startswith("@@"):
+            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", line)
+            if m:
+                old_n, new_n = int(m.group(1)), int(m.group(2))
+            continue
+        if line.startswith(("---", "+++")):
+            continue
+        if line.startswith("-"):
+            lines.append(("-", old_n, new_n, line[1:]))
+            old_n += 1
+        elif line.startswith("+"):
+            lines.append(("+", old_n, new_n, line[1:]))
+            new_n += 1
+        else:
+            lines.append((" ", old_n, new_n, line))
+            old_n += 1
+            new_n += 1
+    return lines
+
+
 def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
-    """Returns result_text."""
+    """Returns (result_text, diff_info_or_None)."""
     attrs = attrs or {}
     if name == "run":
         wants_root = "root" in attrs and attrs.get("root", "").lower() in ("true", "1", "yes", "")
         root = cfg.get("root", False) or wants_root
         category = "rootcmd" if wants_root else "cmd"
         if not check_perm(cfg, category, arg, session_perm):
-            return "[Tool run: user denied]"
+            return "[Tool run: user denied]", None
         if wants_root and not shutil.which("su"):
-            return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]"
+            return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]", None
         ui_note(C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET)
         code, out, shown = run_command(arg, root)
         if root:
@@ -392,53 +418,66 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             if check_perm(cfg, "rootcmd", arg, session_perm):
                 ui_note(C_DIM + "* root diye retry korchi...")
                 code, out, _ = run_command(arg, True)
-                return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]"
-        return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]"
+                return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]", None
+        return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]", None
 
     if name == "ls":
         if not check_perm(cfg, "file", arg, session_perm, prompt=False):
-            return "[Tool ls: user denied]"
+            return "[Tool ls: user denied]", None
         try:
             entries = sorted(os.listdir(arg))
             listing = "\n".join(e + ("/" if os.path.isdir(os.path.join(arg, e)) else "") for e in entries[:200])
         except OSError as e:
             listing = f"error: {e}"
-        return f"[Tool ls {arg}]\n{truncate(listing)}\n[/Tool ls]"
+        return f"[Tool ls {arg}]\n{truncate(listing)}\n[/Tool ls]", None
 
     if name == "read":
         if not check_perm(cfg, "file", arg, session_perm, prompt=False):
-            return "[Tool read: user denied]"
+            return "[Tool read: user denied]", None
         try:
             with open(arg, "rb") as f:
                 data = f.read(300 * 1024)
             text = data.decode(errors="replace")
         except OSError as e:
-            return f"[Tool read {arg}]\nerror: {e}\n[/Tool read]"
-        return f"[Tool read {arg}]\n{truncate(text)}\n[/Tool read]"
+            return f"[Tool read {arg}]\nerror: {e}\n[/Tool read]", None
+        return f"[Tool read {arg}]\n{truncate(text)}\n[/Tool read]", None
 
     if name == "write":
         if not check_perm(cfg, "file", arg, session_perm):
-            return "[Tool write: user denied]"
+            return "[Tool write: user denied]", None
         try:
             os.makedirs(os.path.dirname(os.path.abspath(arg)), exist_ok=True)
+            old = ""
+            exists = os.path.isfile(arg)
+            if exists:
+                try:
+                    with open(arg, "r", errors="replace") as f:
+                        old = f.read(300 * 1024)
+                except OSError:
+                    pass
             with open(arg, "w") as f:
                 f.write(content)
-            return f"[Tool write {arg}]: saved {len(content)} chars"
+            diff = None
+            if old != content:
+                lines = make_diff_lines(old, content)
+                if lines:
+                    diff = {"path": arg, "exists": exists, "lines": lines}
+            return f"[Tool write {arg}]: saved {len(content)} chars", diff
         except OSError as e:
-            return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]"
+            return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]", None
 
     if name == "search":
         ui_note(C_DIM + f"🔎 searching: {content}")
         try:
             res = ddg_search(content)
         except Exception as e:
-            return f"[Tool search error: {e}]"
+            return f"[Tool search error: {e}]", None
         if not res:
-            return "[Tool search: kichu result pai nai]"
+            return "[Tool search: kichu result pai nai]", None
         lines = [f"{i + 1}. {r['title']} — {r['url']}\n   {r['snippet']}" for i, r in enumerate(res)]
-        return "[Tool search]\n" + "\n".join(lines) + "\n[/Tool search]"
+        return "[Tool search]\n" + "\n".join(lines) + "\n[/Tool search]", None
 
-    return f"[Tool {name}: unknown]"
+    return f"[Tool {name}: unknown]", None
 
 
 def parse_tools(text):
@@ -855,6 +894,33 @@ class UI:
             out.append(self.card_row(color, ln, W))
         return out
 
+    def diff_card(self, d, W):
+        out = []
+        path = d["path"]
+        title = ("← Edit " if d.get("exists") else "← Write ") + path
+        out += self.card(C_ACC, C_BOLD + C_TEXT + title + C_RESET, W)
+        lines = d["lines"]
+        maxn = max((len(str(a or b)) for _, a, b, _ in lines), default=0)
+        max_show = 40
+        if len(lines) > max_show:
+            lines = lines[:max_show]
+            tail = True
+        else:
+            tail = False
+        for kind, a, b, text in lines:
+            if kind == "-":
+                num, fg, mark = a, C_RED, "-"
+            elif kind == "+":
+                num, fg, mark = b, C_GOOD, "+"
+            else:
+                num, fg, mark = a, C_MUTED, " "
+            txt = truncate(text.replace("\t", "  "), W - 12).replace("\n", " ")
+            ln = fg + mark + str(num or " ").rjust(maxn) + " " + txt + C_RESET
+            out.append(self.card_row(fg, ln, W))
+        if tail:
+            out.append(self.card_row(C_MUTED, "… " + str(len(d["lines"]) - max_show) + " more", W))
+        return out
+
     def plain_block(self, model, text, W):
         out = []
         for ln in wrap_text(text, max(20, W - 6)):
@@ -904,7 +970,7 @@ class UI:
         return out
 
     def frame_home(self, W, H):
-        lines = [self.hdr("voxel", "v3.5.4 · " + self.model, W)]
+        lines = [self.hdr("voxel", "v3.5.5 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -966,8 +1032,11 @@ class UI:
         for label, text in self.notices:
             body += self.card(C_WARN, "[" + label + "] " + text, W)
         for n in self.notes:
-            for ln in wrap_text(n, W - 6):
-                body.append("  " + C_DIM + ln + C_RESET)
+            if isinstance(n, dict):
+                body += self.diff_card(n, W)
+            else:
+                for ln in wrap_text(n, W - 6):
+                    body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
             kind, key = self.popup
             opts = ["Yes", "No", "Always"]
@@ -1382,7 +1451,7 @@ class UI:
                 note_idx = len(self.notes)
                 self.notes.append(C_YELLOW + "⚙ " + name + ": " + truncate(arg, 50) + C_RESET)
                 self.redraw()
-                res = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs)
+                res, diff_info = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs)
                 results.append(f"[tool {name}: {res}]")
                 code_m = re.search(r"exit=(-?\d+)", res)
                 ok = not code_m or code_m.group(1) == "0"
@@ -1393,6 +1462,8 @@ class UI:
                 else:
                     self.notes[note_idx] = (C_RED + "✗ " + name + ": " + truncate(arg, 50)
                                             + (" — " + first_line if first_line else "") + C_RESET)
+                if diff_info:
+                    self.notes[note_idx] = diff_info
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
@@ -1444,7 +1515,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.4" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.5" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
