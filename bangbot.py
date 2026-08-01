@@ -449,11 +449,28 @@ def fmt_duration(sec):
 # ---------------- TUI ----------------
 
 def term_size():
+    rows = cols = 0
     try:
-        s = shutil.get_terminal_size()
-        return max(44, min(s.columns, 120)), max(10, s.lines)
+        import fcntl
+        import struct
+        with open("/dev/tty") as f:
+            s = fcntl.ioctl(f.fileno(), fcntl.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0))
+        rows, cols = struct.unpack("HHHH", s)[:2]
     except Exception:
-        return 60, 24
+        pass
+    if rows <= 0 or cols <= 0:
+        try:
+            cols = int(os.environ.get("COLUMNS") or 0)
+            rows = int(os.environ.get("LINES") or 0)
+        except Exception:
+            pass
+    if rows <= 0 or cols <= 0:
+        try:
+            s = shutil.get_terminal_size()
+            rows, cols = s.lines, s.columns
+        except Exception:
+            rows, cols = 24, 60
+    return max(20, min(max(cols, 1), 120)), max(10, min(max(rows, 1), 200))
 
 
 def wrap_text(text, width):
@@ -823,7 +840,11 @@ class UI:
             frame = self.frame_chat(W, H)
         while len(frame) < H:
             frame.append("")
-        sys.stdout.write("\x1b[H" + "\n".join(frame))
+        out = []
+        for i, line in enumerate(frame[:H]):
+            out.append("\x1b[" + str(i + 1) + ";1H\x1b[K" + line)
+        out.append("\x1b[" + str(H) + ";1H")
+        sys.stdout.write("".join(out))
         sys.stdout.flush()
 
     # ---------- input ----------
