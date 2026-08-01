@@ -10,8 +10,10 @@ import html as html_mod
 import json
 import os
 import re
+import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -93,6 +95,16 @@ ATTR_RE = re.compile(r"(\w+)(?:=\"([^\"]*)\")?")
 STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 MODEL_FAIL = {}  # model -> last failure time
 SESSION_TOKENS = {"in": 0, "out": 0}
+ui = None  # TUI instance (set in main)
+
+
+def ui_note(line):
+    """Transient status line — TUI te frame er vitore, plain mode e print."""
+    if ui is not None and not ui.plain:
+        ui.notes.append(line)
+        ui.redraw()
+    else:
+        print("  " + line, flush=True)
 
 
 # ---------------- config ----------------
@@ -285,56 +297,12 @@ def perm_rule(cfg, category, key):
     return cfg.get("perm", {}).get("default_" + category, "ask")
 
 
-def render_opts(idx, options):
-    parts = []
-    for i, o in enumerate(options):
-        if i == idx:
-            parts.append(C_BOLD + "\x1b[7m" + " " + o + " " + C_RESET)
-        else:
-            parts.append(" " + o + " ")
-    sys.stdout.write("\r" + " " * 50 + "\r  > " + "  ".join(parts))
-    sys.stdout.flush()
-
-
 def ask_permission(kind, key):
-    options = ["Yes", "No", "Always"]
+    if ui is not None and not ui.plain:
+        return ui.perm_popup(kind, key)
     print()
     print("  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET)
     print("  " + C_BOLD + key + C_RESET)
-    if termios and sys.stdin.isatty():
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        idx = 0
-        render_opts(idx, options)
-        try:
-            tty.setraw(fd)
-            while True:
-                ch = sys.stdin.read(1)
-                if ch == "\x1b":
-                    seq = sys.stdin.read(2)
-                    if seq == "[C":
-                        idx = (idx + 1) % len(options)
-                        render_opts(idx, options)
-                    elif seq == "[D":
-                        idx = (idx - 1) % len(options)
-                        render_opts(idx, options)
-                elif ch in ("\r", "\n"):
-                    break
-                elif ch in "123":
-                    idx = int(ch) - 1
-                    if idx < len(options):
-                        render_opts(idx, options)
-                        break
-                elif ch in ("q", "Q", "\x03"):
-                    idx = -1
-                    break
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-        if idx == -1:
-            return "deny_once"
-        return ("allow_once", "deny_once", "always")[idx]
     while True:
         try:
             ans = input("  > 1=Yes 2=No 3=Always (Enter=1): ").strip().lower()
@@ -384,16 +352,16 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             return "[Tool run: user denied]"
         if wants_root and not shutil.which("su"):
             return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]"
-        print("  " + C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET, flush=True)
+        ui_note(C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET)
         code, out, shown = run_command(arg, root)
         if root:
-            print(C_DIM + f"  (root mode: su -c {shlex.quote(shown)})" + C_RESET)
+            ui_note(C_DIM + f"(root mode: su -c {shlex.quote(shown)})" + C_RESET)
         if not wants_root and not cfg.get("root") and code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ) and shutil.which("su"):
-            print("  " + C_YELLOW + "! Permission denied — root diye try korbo?" + C_RESET)
+            ui_note(C_YELLOW + "! Permission denied — root diye try korbo?")
             if check_perm(cfg, "rootcmd", arg, session_perm):
-                print("  " + C_DIM + "* root diye retry korchi..." + C_RESET)
+                ui_note(C_DIM + "* root diye retry korchi...")
                 code, out, _ = run_command(arg, True)
                 return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]"
         return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]"
@@ -431,7 +399,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]"
 
     if name == "search":
-        print("  " + C_DIM + f"🔎 searching: {content}" + C_RESET, flush=True)
+        ui_note(C_DIM + f"🔎 searching: {content}")
         try:
             res = ddg_search(content)
         except Exception as e:
@@ -463,11 +431,12 @@ def fmt_duration(sec):
 
 # ---------------- TUI ----------------
 
-def term_w():
+def term_size():
     try:
-        return max(44, min(shutil.get_terminal_size().columns, 120))
+        s = shutil.get_terminal_size()
+        return max(44, min(s.columns, 120)), max(10, s.lines)
     except Exception:
-        return 60
+        return 60, 24
 
 
 def wrap_text(text, width):
@@ -490,60 +459,12 @@ def wrap_text(text, width):
     return lines
 
 
-def render(cfg, model, root_on, messages, notices, status, W):
-    out = [CLEAR]
-    h1 = C_BOLD + C_CYAN + "VOXEL AI v3.3" + C_RESET
-    h2 = "  ● " + C_GREEN + model + C_RESET + "  |  " + C_DIM + short_path() + C_RESET
-    if root_on:
-        h2 += "  |  root:ON"
-    out.append("  " + h1 + h2)
-    out.append(C_DIM + "  " + "─" * max(10, W - 4) + C_RESET)
-    for msg in messages[1:]:
-        role = msg["role"]
-        text = msg["content"]
-        if text.startswith("[tool "):
-            m = re.search(r"\[tool (\w+):", text)
-            out.append("  " + C_GREEN + "└─ [✓] " + (m.group(1) if m else "tool") + C_RESET)
-            continue
-        if role == "user":
-            label, color = "👤 You", C_GREEN
-        else:
-            label, color = "🤖 " + model, C_CYAN
-        prefix = label + ": "
-        first = True
-        for ln in wrap_text(text, max(20, W - 8)):
-            if first:
-                out.append("  " + color + prefix + ln + C_RESET)
-                first = False
-            else:
-                out.append("  " + " " * len(prefix) + ln)
-        out.append("")
-    for label, text in notices:
-        first = True
-        for ln in wrap_text(text, max(20, W - 8)):
-            if first:
-                out.append("  " + C_YELLOW + "[" + label + "] " + ln + C_RESET)
-                first = False
-            else:
-                out.append("  " + " " * (len(label) + 4) + ln)
-        out.append("")
-    out.append(C_DIM + "  " + "─" * max(10, W - 4) + C_RESET)
-    out.append("  " + C_DIM + "⚡ " + C_RESET + status)
-    sys.stdout.write("\n".join(out) + "\n")
-    sys.stdout.flush()
-
-
 def short_path():
     cwd = os.getcwd()
     home = os.path.expanduser("~")
     if cwd.startswith(home):
         return "~" + cwd[len(home):]
     return cwd
-
-
-def clr_line():
-    sys.stdout.write("\r" + "\x1b[2K")
-    sys.stdout.flush()
 
 
 def list_free():
@@ -609,47 +530,6 @@ def help_text():
     ])
 
 
-def ai_reply(messages, model, api_key, W, root_on):
-    """Streams AI reply with loading spinner. Returns (content, reasoning, err, used_model)."""
-    parts = []
-    done = threading.Event()
-
-    def on_chunk(kind, text):
-        parts.append((kind, text))
-        if kind == "content":
-            done.set()
-
-    result = {}
-
-    def worker():
-        result["err"], result["model"] = call_chat(messages, model, api_key, on_chunk)
-        done.set()
-
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-
-    i = 0
-    try:
-        while t.is_alive() or not result:
-            sys.stdout.write("\r  " + C_CYAN + "🤖 " + model + C_RESET + "  ⏳ " + SPINNER[i % len(SPINNER)] + " thinking...")
-            sys.stdout.flush()
-            i += 1
-            time.sleep(0.12)
-    except KeyboardInterrupt:
-        clr_line()
-        return "", "", "cancelled", model
-    clr_line()
-
-    err = result.get("err")
-    used_model = result.get("model")
-    if err:
-        return "", "", err, used_model
-
-    reasoning = "".join(text for kind, text in parts if kind == "reasoning")
-    content = "".join(text for kind, text in parts if kind == "content")
-    return content, reasoning, None, used_model
-
-
 def rel_time(ts):
     d = time.time() - ts
     if d < 60:
@@ -661,81 +541,6 @@ def rel_time(ts):
     return f"{int(d // 86400)}d ago"
 
 
-COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/save ", "/load ", "/sessions",
-                "/rm ", "/stats", "/perm", "/root", "/menu", "/exit"]
-
-
-def read_line(prompt, history, W, allow_esc=True):
-    """Raw-mode line editor. Returns (text, mode): send / esc / quit."""
-    buf = ""
-    hist = list(history)
-    hidx = len(hist)
-
-    def redraw():
-        disp = buf
-        if len(disp) > W - 10:
-            disp = "…" + disp[-(W - 11):]
-        sys.stdout.write("\r" + " " * (W - 4) + "\r" + prompt + disp)
-        sys.stdout.flush()
-
-    if not (termios and sys.stdin.isatty()):
-        try:
-            return input(prompt + " "), "send"
-        except (KeyboardInterrupt, EOFError):
-            return None, "quit"
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        sys.stdout.write("\r" + " " * (W - 4) + "\r" + prompt + C_DIM + "Type your command or prompt here..." + C_RESET)
-        sys.stdout.flush()
-        while True:
-            ch = sys.stdin.read(1)
-            if ch == "\x1b":
-                nxt = sys.stdin.read(1)
-                if nxt == "[":
-                    k = sys.stdin.read(1)
-                    if k == "A" and hist:
-                        hidx = max(0, hidx - 1)
-                        buf = hist[hidx]
-                    elif k == "B":
-                        hidx = min(len(hist), hidx + 1)
-                        buf = hist[hidx] if hidx < len(hist) else ""
-                    redraw()
-                elif allow_esc:
-                    sys.stdout.write("\r\n")
-                    sys.stdout.flush()
-                    return buf, "esc"
-            elif ch in ("\r", "\n"):
-                if buf.endswith("\\"):
-                    buf = buf[:-1] + "\n"
-                    sys.stdout.write("\r\n")
-                    redraw()
-                    continue
-                sys.stdout.write("\r\n")
-                sys.stdout.flush()
-                return buf, "send"
-            elif ch in ("\x7f", "\x08"):
-                buf = buf[:-1]
-                redraw()
-            elif ch == "\x03":
-                sys.stdout.write("\r\n")
-                sys.stdout.flush()
-                return None, "quit"
-            elif ch == "\t":
-                for c in COMMAND_LIST:
-                    if c.startswith(buf) and c != buf:
-                        buf = c
-                        break
-                redraw()
-            elif ch.isprintable() or ord(ch) >= 160:
-                buf += ch
-                redraw()
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-
 def session_list():
     os.makedirs(CHATS_DIR, exist_ok=True)
     out = []
@@ -745,6 +550,611 @@ def session_list():
             out.append((f[:-5], os.path.getmtime(p)))
     out.sort(key=lambda x: -x[1])
     return out
+
+
+def raw_key():
+    """Read one key (raw mode). Returns token: char / UP/DOWN/LEFT/RIGHT/TAB/ENTER/ESC/BACK/CTRL-C."""
+    if not (termios and sys.stdin.isatty()):
+        try:
+            ch = sys.stdin.read(1)
+        except EOFError:
+            return "CTRL-C"
+        if ch in ("\r", "\n"):
+            return "ENTER"
+        if ch == "\x03":
+            return "CTRL-C"
+        if ch in ("\x7f", "\x08"):
+            return "BACK"
+        if ch == "\x1b":
+            return "ESC"
+        if ch == "\t":
+            return "TAB"
+        return ch
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = os.read(fd, 1).decode(errors="replace")
+        if ch == "\x1b":
+            r, _, _ = select.select([fd], [], [], 0.06)
+            if not r:
+                return "ESC"
+            nxt = os.read(fd, 1).decode(errors="replace")
+            if nxt == "[":
+                k = os.read(fd, 1).decode(errors="replace")
+                if k == "A":
+                    return "UP"
+                if k == "B":
+                    return "DOWN"
+                if k == "C":
+                    return "RIGHT"
+                if k == "D":
+                    return "LEFT"
+            elif nxt == "O":
+                return "ENTER"
+            return "ESC"
+        if ch in ("\r", "\n"):
+            return "ENTER"
+        if ch == "\x03":
+            return "CTRL-C"
+        if ch in ("\x7f", "\x08"):
+            return "BACK"
+        if ch == "\t":
+            return "TAB"
+        if ch.isprintable() or ord(ch) >= 160:
+            return ch
+        return ""
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/save ", "/load ", "/sessions",
+                "/rm ", "/stats", "/perm", "/root", "/exit"]
+
+
+class UI:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.api_key = get_api_key(cfg)
+        self.model = cfg.get("model") or DEFAULT_MODEL
+        self.root_on = cfg.get("root", False)
+        self.plain = not (termios and sys.stdin.isatty())
+        self.route = "home"
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.notices = []
+        self.notes = []
+        self.status = "ready"
+        self.session_perm = {"cmd": set(), "file": set()}
+        self.loaded_name = None
+        self.buf = ""
+        self.hist = []
+        self.hidx = 0
+        self.cur = 0
+        self.streaming = False
+        self.cancel = False
+        self.pending = ""
+        self.reasoning = ""
+        self.popup = None
+        self.popup_idx = 0
+        self.resized = False
+        self.quitting = False
+        self._comp = -1
+
+    # ---------- screen ----------
+
+    def enter(self):
+        sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
+        sys.stdout.flush()
+
+        def on_winch(sig, frame):
+            self.resized = True
+
+        try:
+            signal.signal(signal.SIGWINCH, on_winch)
+        except (ValueError, AttributeError):
+            pass
+
+    def exit(self):
+        sys.stdout.write("\x1b[?25h\x1b[?1049l")
+        sys.stdout.flush()
+
+    def notice(self, label, text):
+        if self.plain:
+            for ln in wrap_text(text, 74):
+                print("  " + C_YELLOW + "[" + label + "] " + ln + C_RESET)
+        else:
+            self.notices = [(label, text)]
+            self.redraw()
+
+    def wrap_msg(self, label, color, text, W, bracket=False):
+        out = []
+        prefix = ("[" + label + "] " if bracket else label + ": ")
+        first = True
+        for ln in wrap_text(text, max(20, W - 8)):
+            if first:
+                out.append("  " + color + prefix + ln + C_RESET)
+                first = False
+            else:
+                out.append("  " + " " * len(prefix) + ln)
+        out.append("")
+        return out
+
+    def frame_home(self, W, H):
+        lines = []
+        lines.append(C_BOLD + C_CYAN + "  VOXEL AI" + C_RESET + C_DIM + " v3.4  -  free AI agent CLI (OpenCode Zen)" + C_RESET)
+        info = "  " + C_GREEN + "● " + self.model + C_RESET + C_DIM + "  |  " + short_path() + C_RESET
+        if self.root_on:
+            info += C_DIM + "  |  root:ON" + C_RESET
+        lines.append(info)
+        lines.append(C_DIM + "  " + "─" * max(10, W - 4) + C_RESET)
+        lines.append("")
+        lines.append("  " + C_BOLD + "Recent sessions:" + C_RESET)
+        items = [("__new__", "＋ New Chat", "start a fresh chat")] + [(n, n, rel_time(t)) for n, t in session_list()]
+        self.cur = max(0, min(self.cur, len(items) - 1))
+        for i, (name, label, sub) in enumerate(items):
+            mark = "❯" if i == self.cur else " "
+            line = "  " + mark + " " + label
+            if i == self.cur:
+                lines.append(C_CYAN + line + C_RESET + C_DIM + "  " + sub + C_RESET)
+            else:
+                lines.append(C_DIM + line + C_RESET + C_DIM + "  " + sub + C_RESET)
+        lines.append("")
+        lines.append(C_DIM + "  ↑/↓ select | Enter open | q/Ctrl+C quit" + C_RESET)
+        lines.append(C_DIM + "  any character type korlei notun chat shuru" + C_RESET)
+        if len(lines) < H - 1:
+            lines += [""] * (H - 1 - len(lines))
+        return lines[:H]
+
+    def frame_chat(self, W, H):
+        title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
+        l = "● " + C_GREEN + self.model + C_RESET + C_DIM + "  |  # " + title + C_RESET
+        tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
+        r = C_DIM + f"tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}" + C_RESET
+        plain_l = "● " + self.model + "  |  # " + title
+        plain_r = f"tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
+        pad = max(1, W - 4 - len(plain_l) - len(plain_r))
+        lines = [l + " " * pad + r]
+        lines.append(C_DIM + " " + "─" * (W - 2) + C_RESET)
+        body = []
+        for msg in self.messages[1:]:
+            role, text = msg["role"], msg["content"]
+            if text.startswith("[tool "):
+                m = re.search(r"\[tool (\w+):", text)
+                body.append("  " + C_GREEN + "└─ [✓] " + (m.group(1) if m else "tool") + C_RESET)
+                continue
+            if role == "user":
+                label, color = "You", C_GREEN
+            else:
+                label, color = self.model, C_CYAN
+            body += self.wrap_msg(label, color, text, W)
+        if self.streaming and self.pending:
+            body += self.wrap_msg(self.model, C_CYAN, self.pending, W)
+        for label, text in self.notices:
+            body += self.wrap_msg(label, C_YELLOW, text, W, bracket=True)
+        for n in self.notes:
+            for ln in wrap_text(n, W - 6):
+                body.append("  " + ln)
+        if self.popup:
+            kind, key = self.popup
+            opts = ["Yes", "No", "Always"]
+            parts = []
+            for i, o in enumerate(opts):
+                if i == self.popup_idx:
+                    parts.append(C_BOLD + "\x1b[7m" + o + C_RESET)
+                else:
+                    parts.append(C_DIM + o + C_RESET)
+            body += [
+                "",
+                "  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET,
+                "  " + C_BOLD + key + C_RESET,
+                "  ←/→ " + "  ".join(parts) + "   Enter ok · q deny",
+            ]
+        body_max = max(1, H - 4)
+        if len(body) > body_max:
+            body = body[-body_max:]
+        else:
+            body = body + [""] * (body_max - len(body))
+        lines += body
+        disp = self.buf
+        if len(disp) > W - 8:
+            disp = "…" + disp[-(W - 9):]
+        if disp:
+            lines.append("❯ " + disp)
+        else:
+            lines.append("❯ " + C_DIM + "Type your command or prompt here..." + C_RESET)
+        lines.append(C_DIM + "[Enter] Send | [Esc] Home | [Tab] Complete | [Ctrl+C] Quit" + C_RESET)
+        return lines[:H]
+
+    def redraw(self):
+        if self.plain:
+            return
+        W, H = term_size()
+        if self.route == "home":
+            frame = self.frame_home(W, H)
+        else:
+            frame = self.frame_chat(W, H)
+        while len(frame) < H:
+            frame.append("")
+        sys.stdout.write("\x1b[H" + "\n".join(frame))
+        sys.stdout.flush()
+
+    # ---------- input ----------
+
+    def input_loop(self):
+        while not self.quitting:
+            if self.resized:
+                self.resized = False
+                self.redraw()
+            k = raw_key()
+            if self.resized:
+                self.resized = False
+            if self.route == "home":
+                self.key_home(k)
+            else:
+                self.key_chat(k)
+
+    def key_home(self, k):
+        items = [("__new__",)] + [(n,) for n, _ in session_list()]
+        if k == "UP":
+            self.cur = max(0, self.cur - 1)
+            self.redraw()
+        elif k == "DOWN":
+            self.cur = min(len(items) - 1, self.cur + 1)
+            self.redraw()
+        elif k == "ENTER":
+            self.open_session(items[self.cur][0])
+        elif k in ("CTRL-C", "q", "Q"):
+            self.quitting = True
+        elif k == "ESC":
+            self.redraw()
+        elif k.isprintable():
+            self.buf = k
+            self.open_session("__new__")
+        else:
+            self.redraw()
+
+    def open_session(self, name):
+        if name == "__new__":
+            if len(self.messages) > 1:
+                save_session("last", self.messages)
+            self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+            SESSION_TOKENS["in"] = SESSION_TOKENS["out"] = 0
+            self.session_perm = {"cmd": set(), "file": set()}
+            self.loaded_name = None
+            self.notices = []
+            self.notes = []
+            self.status = "ready"
+        else:
+            loaded = load_session(name)
+            if loaded and loaded[0].get("role") == "system":
+                self.messages = loaded
+                self.loaded_name = name
+                self.notices = [("SYS", f"Loaded: {name} ({len(loaded) - 1} messages)")]
+            else:
+                self.notices = [("SYS", "Session paoa gelo na: " + name)]
+        self.route = "chat"
+        self.redraw()
+
+    def key_chat(self, k):
+        if k == "ENTER":
+            text = self.buf
+            if text.strip():
+                self.hist.append(text)
+                self.hidx = len(self.hist)
+                self.buf = ""
+                self.send(text)
+            else:
+                self.redraw()
+        elif k == "ESC":
+            if len(self.messages) > 1:
+                save_session("last", self.messages)
+            self.buf = ""
+            self.notices = []
+            self.notes = []
+            self.route = "home"
+            self.cur = 0
+            self.redraw()
+        elif k == "CTRL-C":
+            self.quitting = True
+        elif k == "BACK":
+            self.buf = self.buf[:-1]
+            self.redraw()
+        elif k == "TAB":
+            self.complete()
+        elif k == "UP":
+            if self.hist:
+                self.hidx = max(0, self.hidx - 1)
+                self.buf = self.hist[self.hidx]
+            self.redraw()
+        elif k == "DOWN":
+            self.hidx = min(len(self.hist), self.hidx + 1)
+            self.buf = self.hist[self.hidx] if self.hidx < len(self.hist) else ""
+            self.redraw()
+        elif k in ("RIGHT", "LEFT", ""):
+            self.redraw()
+        elif k.isprintable():
+            self.buf += k
+            self.redraw()
+        else:
+            self.redraw()
+
+    def complete(self):
+        if self.buf.startswith("/"):
+            matches = [c for c in COMMAND_LIST if c.startswith(self.buf)]
+        elif self.buf:
+            matches = [c for c in COMMAND_LIST if c.startswith(self.buf)]
+        else:
+            matches = []
+        if not matches:
+            self._comp = -1
+            return
+        self._comp = (self._comp + 1) % len(matches)
+        self.buf = matches[self._comp]
+        self.redraw()
+
+    # ---------- commands ----------
+
+    def run_command(self, text):
+        user_input = text.strip()
+        if user_input in ("/exit", "/quit"):
+            self.quitting = True
+            return True
+        if user_input == "/help":
+            self.notice("HELP", help_text())
+            return True
+        if user_input == "/new":
+            self.open_session("__new__")
+            return True
+        if user_input == "/stats":
+            tot = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
+            self.notice("STATS", f"input: {SESSION_TOKENS['in']} tok | output: {SESSION_TOKENS['out']} tok | total: {tot} (cost $0)")
+            return True
+        if user_input == "/models":
+            self.notice("MODELS", list_free())
+            return True
+        if user_input == "/root":
+            if not shutil.which("su"):
+                self.notice("SYS", "su paoa gelo na — rooted device dorkar (Magisk/KernelSU).")
+            else:
+                self.root_on = not self.root_on
+                self.cfg["root"] = self.root_on
+                save_config(self.cfg)
+                self.notice("SYS", f"Root mode: {'ON (su -c)' if self.root_on else 'OFF'}")
+            return True
+        if user_input.startswith("/model "):
+            new_model = user_input.split(None, 1)[1].strip()
+            self.cfg["model"] = new_model
+            save_config(self.cfg)
+            self.model = new_model
+            self.notice("SYS", "Model changed: " + self.model)
+            return True
+        if user_input == "/perm":
+            self.notice("PERM", show_perms(self.cfg))
+            return True
+        if user_input.startswith("/perm "):
+            parts = user_input.split()
+            try:
+                if len(parts) == 3 and parts[2] in ("ask", "always", "deny"):
+                    self.cfg.setdefault("perm", {})["default_" + parts[1]] = parts[2]
+                    save_config(self.cfg)
+                    self.notice("PERM", f"default {parts[1]}: {parts[2]}")
+                elif len(parts) == 5 and parts[2] == "add" and parts[4] in ("ask", "always", "deny"):
+                    self.cfg.setdefault("perm", {}).setdefault(parts[1], {})[parts[3]] = parts[4]
+                    save_config(self.cfg)
+                    self.notice("PERM", f"rule: {parts[1]} '{parts[3]}' -> {parts[4]}")
+                elif parts[1] == "reset":
+                    self.cfg["perm"] = {}
+                    save_config(self.cfg)
+                    self.notice("PERM", "All permission rules reset.")
+                else:
+                    self.notice("PERM", show_perms(self.cfg))
+            except Exception:
+                self.notice("PERM", show_perms(self.cfg))
+            return True
+        if user_input == "/sessions":
+            names = list_sessions()
+            txt = "Saved sessions: " + (", ".join(names) if names else "(kono session nai)")
+            self.notice("SESSIONS", txt + "\nLoad: /load <name> | Delete: /rm <name>")
+            return True
+        if user_input.startswith("/save"):
+            name = user_input.split(None, 1)[1].strip() if len(user_input.split(None, 1)) > 1 else time.strftime("chat-%Y%m%d-%H%M%S")
+            if len(self.messages) > 1:
+                path = save_session(name, self.messages)
+                self.notice("SYS", "Saved: " + path)
+            else:
+                self.notice("SYS", "Chat khali, save korar moto kichu nai.")
+            return True
+        if user_input.startswith("/load "):
+            name = user_input.split(None, 1)[1].strip()
+            loaded = load_session(name)
+            if loaded and loaded[0].get("role") == "system":
+                self.messages = loaded
+                self.loaded_name = name
+                self.notice("SYS", f"Loaded: {name} ({len(loaded) - 1} messages)")
+            else:
+                self.notice("SYS", "Session paoa gelo na: " + name)
+            return True
+        if user_input.startswith("/rm "):
+            name = user_input.split(None, 1)[1].strip()
+            try:
+                os.remove(os.path.join(CHATS_DIR, name + ".json"))
+                self.notice("SYS", "Deleted: " + name)
+            except OSError:
+                self.notice("SYS", "Session nai: " + name)
+            return True
+        if user_input.startswith("/"):
+            self.notice("SYS", "Unknown command: " + user_input + " (type /help)")
+            return True
+        return False
+
+    # ---------- chat flow ----------
+
+    def send(self, text):
+        if self.run_command(text):
+            self.redraw()
+            return
+        self.notices = []
+        self.notes = []
+        self.messages.append({"role": "user", "content": text})
+        self.status = self.model
+        self.redraw()
+        self.run_turn()
+
+    def stream_reply(self):
+        parts = []
+        done = threading.Event()
+        result = {}
+
+        def on_chunk(kind, text):
+            parts.append((kind, text))
+
+        def worker():
+            result["err"], result["model"] = call_chat(self.messages, self.model, self.api_key, on_chunk)
+            done.set()
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        self.streaming = True
+        self.cancel = False
+        i = 0
+        last_redraw = 0.0
+        try:
+            while t.is_alive() or not done.is_set():
+                r, _, _ = select.select([sys.stdin], [], [], 0.15)
+                if r:
+                    k = raw_key()
+                    if k in ("CTRL-C", "ESC"):
+                        self.cancel = True
+                        break
+                self.pending = "".join(x for kind, x in parts if kind == "content")
+                if self.pending:
+                    self.status = self.model + " | " + SPINNER[i % len(SPINNER)]
+                else:
+                    self.status = self.model + " | thinking " + SPINNER[i % len(SPINNER)]
+                now = time.time()
+                if now - last_redraw > 0.15 or not self.pending:
+                    self.redraw()
+                    last_redraw = now
+                i += 1
+        except KeyboardInterrupt:
+            self.cancel = True
+        finally:
+            self.streaming = False
+            self.pending = ""
+            self.reasoning = ""
+        err = result.get("err")
+        used_model = result.get("model")
+        if self.cancel:
+            return "", "", "cancelled", used_model or self.model
+        if err:
+            return "", "", err, used_model
+        reasoning = "".join(x for kind, x in parts if kind == "reasoning")
+        content = "".join(x for kind, x in parts if kind == "content")
+        return content, reasoning, None, used_model
+
+    def run_turn(self):
+        for round_no in range(MAX_TOOL_ROUNDS):
+            t0 = time.time()
+            content, reasoning, err, used_model = self.stream_reply()
+            dt = fmt_duration(time.time() - t0)
+            if used_model and used_model != self.model:
+                self.model = used_model
+            if err:
+                if err == "cancelled":
+                    self.notice("SYS", "cancelled")
+                    self.status = "cancelled"
+                else:
+                    if self.messages and self.messages[-1]["role"] == "user":
+                        self.messages.pop()
+                    self.notice("ERR", err)
+                    self.status = "error"
+                self.redraw()
+                return
+            SESSION_TOKENS["in"] += est_tokens(reasoning + content)
+            SESSION_TOKENS["out"] += est_tokens(content)
+            tools = parse_tools(content)
+            self.messages.append({"role": "assistant", "content": content})
+            if not tools:
+                self.status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
+                self.redraw()
+                break
+            results = []
+            for name, attrs, tcontent in tools:
+                if name == "write":
+                    arg = attrs.get("path", "").strip()
+                    tool_content = tcontent
+                else:
+                    arg = (tcontent or attrs.get("path") or "").strip()
+                    tool_content = arg
+                self.notes.append(C_YELLOW + f"⚙ {name}: {arg}" + C_RESET)
+                self.redraw()
+                res = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs)
+                results.append(f"[tool {name}: {res}]")
+                self.notes.append(C_DIM + truncate(res, 1200) + C_RESET)
+                if round_no == MAX_TOOL_ROUNDS - 1:
+                    results.append("(max tool rounds reached, ekhane shesh koro)")
+                self.redraw()
+            self.messages.append({"role": "user", "content": "\n".join(results)})
+        else:
+            self.notice("SYS", "Max tool rounds — /new diye fresh koro.")
+        if self.loaded_name and len(self.messages) > 1:
+            save_session(self.loaded_name, self.messages)
+
+    # ---------- permission popup ----------
+
+    def perm_popup(self, kind, key):
+        self.popup = (kind, key)
+        self.popup_idx = 0
+        try:
+            while True:
+                self.redraw()
+                k = raw_key()
+                if k == "RIGHT":
+                    self.popup_idx = (self.popup_idx + 1) % 3
+                elif k == "LEFT":
+                    self.popup_idx = (self.popup_idx - 1) % 3
+                elif k in ("1", "2", "3"):
+                    self.popup_idx = int(k) - 1
+                    break
+                elif k in ("q", "Q", "CTRL-C", "ESC"):
+                    return "deny_once"
+                elif k in ("ENTER", ""):
+                    break
+        finally:
+            self.popup = None
+            self.redraw()
+        return ("allow_once", "deny_once", "always")[self.popup_idx]
+
+    # ---------- run ----------
+
+    def run(self):
+        if self.plain:
+            self.run_plain()
+            return
+        self.enter()
+        try:
+            self.redraw()
+            self.input_loop()
+        finally:
+            if len(self.messages) > 1:
+                save_session("last", self.messages)
+            self.exit()
+        print(C_DIM + "Bye!" + C_RESET)
+
+    def run_plain(self):
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.4" + C_RESET + "  (" + self.model + ")  —  /help")
+        while not self.quitting:
+            try:
+                text = input("❯ ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                break
+            if not text:
+                continue
+            if text in ("/exit", "/quit"):
+                break
+            self.send(text)
+            self.notes = []
 
 
 def main():
@@ -768,206 +1178,9 @@ def main():
             print(C_RED + "Fetch fail: " + str(e) + C_RESET)
         return
 
-    api_key = get_api_key(cfg)
-    model = cfg.get("model") or DEFAULT_MODEL
-    root_on = cfg.get("root", False)
-    if root_on and not shutil.which("su"):
-        print(C_YELLOW + "! Root mode on kintu 'su' paoa gelo na — rooted device nai mone hocche." + C_RESET)
-
-    W = term_w()
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    notices = [("SYS", "Hello! VOXEL AI ready. /help diye commands dekhun.\nAI er web search default ON. run/write korle arrow prompt asbe: Yes / No / Always")]
-    session_perm = {"cmd": set(), "file": set()}
-    loaded_name = None
-    last_dt = "-"
-    status = "ready"
-
-    render(cfg, model, root_on, messages, notices, status, W)
-
-    hist = []
-    while True:
-        text, mode = read_line("  ❯ ", hist, W)
-        if mode == "quit":
-            if len(messages) > 1:
-                save_session("last", messages)
-            print(C_DIM + "Bye!" + C_RESET)
-            break
-        if mode == "esc":
-            continue
-        user_input = text.strip()
-        if user_input:
-            hist.append(user_input)
-        print(C_DIM + "[Enter] Send | [Esc] Cancel | [Tab] Auto-complete | [Ctrl+C] Quit" + C_RESET)
-        if not user_input:
-            continue
-
-        if user_input in ("/exit", "/quit"):
-            if len(messages) > 1:
-                save_session("last", messages)
-            print(C_DIM + "Bye! (auto-saved: last)" + C_RESET)
-            break
-        elif user_input == "/help":
-            notices = [("HELP", help_text())]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input == "/new":
-            if len(messages) > 1:
-                save_session("last", messages)
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-            SESSION_TOKENS["in"] = SESSION_TOKENS["out"] = 0
-            session_perm = {"cmd": set(), "file": set()}
-            loaded_name = None
-            notices = []
-            status = "new chat"
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input == "/stats":
-            tot = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
-            notices = [("STATS", f"input: {SESSION_TOKENS['in']} tok | output: {SESSION_TOKENS['out']} tok | total: {tot} (cost $0)")]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input == "/models":
-            notices = [("MODELS", list_free())]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input == "/root":
-            if not shutil.which("su"):
-                notices = [("SYS", "su paoa gelo na — rooted device dorkar (Magisk/KernelSU).")]
-            else:
-                root_on = not root_on
-                cfg["root"] = root_on
-                save_config(cfg)
-                notices = [("SYS", f"Root mode: {'ON (su -c)' if root_on else 'OFF'}")]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input.startswith("/model "):
-            new_model = user_input.split(None, 1)[1].strip()
-            cfg["model"] = new_model
-            save_config(cfg)
-            model = new_model
-            notices = [("SYS", "Model changed: " + model)]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input == "/perm":
-            notices = [("PERM", show_perms(cfg))]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input.startswith("/perm "):
-            parts = user_input.split()
-            try:
-                if len(parts) == 3 and parts[2] in ("ask", "always", "deny"):
-                    cfg.setdefault("perm", {})["default_" + parts[1]] = parts[2]
-                    save_config(cfg)
-                    notices = [("PERM", f"default {parts[1]}: {parts[2]}")]
-                elif len(parts) == 5 and parts[2] == "add" and parts[4] in ("ask", "always", "deny"):
-                    cfg.setdefault("perm", {}).setdefault(parts[1], {})[parts[3]] = parts[4]
-                    save_config(cfg)
-                    notices = [("PERM", f"rule: {parts[1]} '{parts[3]}' -> {parts[4]}")]
-                elif parts[1] == "reset":
-                    cfg["perm"] = {}
-                    save_config(cfg)
-                    notices = [("PERM", "All permission rules reset.")]
-                else:
-                    notices = [("PERM", show_perms(cfg))]
-            except Exception:
-                notices = [("PERM", show_perms(cfg))]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input == "/sessions":
-            names = list_sessions()
-            txt = "Saved sessions: " + (", ".join(names) if names else "(kono session nai)")
-            notices = [("SESSIONS", txt + "\nLoad: /load <name> | Delete: /rm <name>")]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input.startswith("/save"):
-            name = user_input.split(None, 1)[1].strip() if len(user_input.split(None, 1)) > 1 else time.strftime("chat-%Y%m%d-%H%M%S")
-            if len(messages) > 1:
-                path = save_session(name, messages)
-                notices = [("SYS", "Saved: " + path)]
-            else:
-                notices = [("SYS", "Chat khali, save korar moto kichu nai.")]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input.startswith("/load "):
-            name = user_input.split(None, 1)[1].strip()
-            loaded = load_session(name)
-            if loaded and loaded[0].get("role") == "system":
-                messages = loaded
-                loaded_name = name
-                notices = [("SYS", f"Loaded: {name} ({len(messages) - 1} messages)")]
-            else:
-                notices = [("SYS", "Session paoa gelo na: " + name)]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input.startswith("/rm "):
-            name = user_input.split(None, 1)[1].strip()
-            try:
-                os.remove(os.path.join(CHATS_DIR, name + ".json"))
-                notices = [("SYS", "Deleted: " + name)]
-            except OSError:
-                notices = [("SYS", "Session nai: " + name)]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-        elif user_input.startswith("/"):
-            notices = [("SYS", "Unknown command: " + user_input + " (type /help)")]
-            render(cfg, model, root_on, messages, notices, status, W)
-            continue
-
-        notices = []
-        messages.append({"role": "user", "content": user_input})
-        render(cfg, model, root_on, messages, notices, status, W)
-
-        for round_no in range(MAX_TOOL_ROUNDS):
-            t0 = time.time()
-            content, reasoning, err, used_model = ai_reply(messages, model, api_key, W, root_on)
-            dt = fmt_duration(time.time() - t0)
-            last_dt = dt
-            if used_model and used_model != model:
-                model = used_model
-
-            if err:
-                if err == "cancelled":
-                    print(C_YELLOW + "  cancelled" + C_RESET)
-                    status = "cancelled"
-                    render(cfg, model, root_on, messages, notices, status, W)
-                    break
-                print(C_RED + "  " + err + C_RESET)
-                messages.pop()
-                status = "error"
-                render(cfg, model, root_on, messages, notices, status, W)
-                break
-
-            SESSION_TOKENS["in"] += est_tokens(reasoning + content)
-            SESSION_TOKENS["out"] += est_tokens(content)
-
-            tools = parse_tools(content)
-            messages.append({"role": "assistant", "content": content})
-
-            if not tools:
-                status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
-                render(cfg, model, root_on, messages, notices, status, W)
-                break
-
-            results = []
-            for name, attrs, tcontent in tools:
-                if name == "write":
-                    arg = attrs.get("path", "").strip()
-                    tool_content = tcontent
-                else:
-                    arg = (tcontent or attrs.get("path") or "").strip()
-                    tool_content = arg
-                print("  " + C_YELLOW + f"⚙ {name}: {arg}" + C_RESET)
-                res = exec_tool(cfg, name, arg, tool_content, session_perm, attrs)
-                results.append(f"[tool {name}: {res}]")
-                print(C_DIM + truncate(res, 1200) + C_RESET)
-                if round_no == MAX_TOOL_ROUNDS - 1:
-                    results.append("(max tool rounds reached, ekhane shesh koro)")
-            messages.append({"role": "user", "content": "\n".join(results)})
-        else:
-            print(C_YELLOW + "! Max tool rounds — /new diye fresh koro." + C_RESET)
-
-        if loaded_name and len(messages) > 1:
-            save_session(loaded_name, messages)
+    global ui
+    ui = UI(cfg)
+    ui.run()
 
 
 if __name__ == "__main__":
