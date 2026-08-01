@@ -647,11 +647,17 @@ def ai_reply(messages, model, api_key, W, root_on):
     print("│  " + C_CYAN + "VOXEL AI" + C_RESET)
     loading_box(W)
     i = 0
-    while t.is_alive() or not result:
-        sys.stdout.write("\r│  │ ⏳ " + SPINNER[i % len(SPINNER)] + " thinking..." + C_RESET)
-        sys.stdout.flush()
-        i += 1
-        time.sleep(0.12)
+    try:
+        while t.is_alive() or not result:
+            sys.stdout.write("\r│  │ ⏳ " + SPINNER[i % len(SPINNER)] + " thinking..." + C_RESET)
+            sys.stdout.flush()
+            i += 1
+            time.sleep(0.12)
+    except KeyboardInterrupt:
+        clr_line()
+        print("│  │ " + C_YELLOW + "stopped" + C_RESET + " " * max(0, cell - 4 - 8) + " │")
+        close_stream_box(W)
+        return "", "", "cancelled", model
     clr_line()
     print("│  " + "│ " + C_DIM + "done ✓" + C_RESET + " " * max(0, cell - 4 - 7) + " │")
     close_stream_box(W)
@@ -943,6 +949,11 @@ def main():
             last_dt = dt
 
             if err:
+                if err == "cancelled":
+                    print(C_YELLOW + "│  cancelled" + C_RESET)
+                    status = "cancelled"
+                    render(cfg, model, root_on, messages, notices, status, W)
+                    break
                 print(C_RED + "│  " + err + C_RESET)
                 messages.pop()
                 status = "error"
