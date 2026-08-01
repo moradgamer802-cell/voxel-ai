@@ -591,9 +591,23 @@ def raw_key():
                 if k == "D":
                     return "LEFT"
             elif nxt == "O":
+                k = os.read(fd, 1).decode(errors="replace")
+                if k == "A":
+                    return "UP"
+                if k == "B":
+                    return "DOWN"
+                if k == "C":
+                    return "RIGHT"
+                if k == "D":
+                    return "LEFT"
                 return "ENTER"
             return "ESC"
         if ch in ("\r", "\n"):
+            r, _, _ = select.select([fd], [], [], 0.02)
+            if r:
+                nxt = os.read(fd, 1).decode(errors="replace")
+                if nxt not in ("\r", "\n"):
+                    return nxt
             return "ENTER"
         if ch == "\x03":
             return "CTRL-C"
@@ -729,6 +743,9 @@ class UI:
             body += self.wrap_msg(label, color, text, W)
         if self.streaming and self.pending:
             body += self.wrap_msg(self.model, C_CYAN, self.pending, W)
+        elif self.streaming:
+            body.append("  " + C_DIM + "⏳ " + self.model + " thinking..." + C_RESET)
+            body.append("")
         for label, text in self.notices:
             body += self.wrap_msg(label, C_YELLOW, text, W, bracket=True)
         for n in self.notes:
@@ -782,16 +799,20 @@ class UI:
 
     def input_loop(self):
         while not self.quitting:
-            if self.resized:
-                self.resized = False
+            try:
+                if self.resized:
+                    self.resized = False
+                    self.redraw()
+                k = raw_key()
+                if self.resized:
+                    self.resized = False
+                if self.route == "home":
+                    self.key_home(k)
+                else:
+                    self.key_chat(k)
+            except Exception as e:
+                self.notice("ERR", "Unexpected error: " + str(e))
                 self.redraw()
-            k = raw_key()
-            if self.resized:
-                self.resized = False
-            if self.route == "home":
-                self.key_home(k)
-            else:
-                self.key_chat(k)
 
     def key_home(self, k):
         items = [("__new__",)] + [(n,) for n, _ in session_list()]
@@ -998,7 +1019,11 @@ class UI:
         self.messages.append({"role": "user", "content": text})
         self.status = self.model
         self.redraw()
-        self.run_turn()
+        try:
+            self.run_turn()
+        except Exception as e:
+            self.notice("ERR", "Unexpected error: " + str(e))
+            self.redraw()
 
     def stream_reply(self):
         parts = []
@@ -1016,8 +1041,8 @@ class UI:
         t.start()
         self.streaming = True
         self.cancel = False
-        i = 0
-        last_redraw = 0.0
+        typed = []
+        self.redraw()
         try:
             while t.is_alive() or not done.is_set():
                 r, _, _ = select.select([sys.stdin], [], [], 0.15)
@@ -1026,22 +1051,28 @@ class UI:
                     if k in ("CTRL-C", "ESC"):
                         self.cancel = True
                         break
-                self.pending = "".join(x for kind, x in parts if kind == "content")
-                if self.pending:
-                    self.status = self.model + " | " + SPINNER[i % len(SPINNER)]
-                else:
-                    self.status = self.model + " | thinking " + SPINNER[i % len(SPINNER)]
-                now = time.time()
-                if now - last_redraw > 0.15 or not self.pending:
+                    elif k == "BACK":
+                        if typed:
+                            typed.pop()
+                            self.buf = "".join(typed)
+                            self.redraw()
+                    elif k and len(k) == 1 and k.isprintable():
+                        typed.append(k)
+                        self.buf = "".join(typed)
+                        self.redraw()
+                pending = "".join(x for kind, x in parts if kind == "content")
+                if pending != self.pending:
+                    self.pending = pending
+                    self.buf = "".join(typed)
                     self.redraw()
-                    last_redraw = now
-                i += 1
         except KeyboardInterrupt:
             self.cancel = True
         finally:
             self.streaming = False
             self.pending = ""
             self.reasoning = ""
+            if typed and not self.cancel:
+                self.buf = "".join(typed)
         err = result.get("err")
         used_model = result.get("model")
         if self.cancel:
