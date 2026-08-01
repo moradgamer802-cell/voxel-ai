@@ -27,7 +27,10 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 
 ## Features
 
-- **Full-screen TUI (faithful opencode UI)** — `voxel` lekhlei terminal clear hoye nijosso interface khule: Home screen (recent sessions + New Chat), opencode-style panel header (`# title` + `● model · tok ~X · $0 · root` right side), message cards with left accent borders + panel background (green = You, purple = assistant/tool), muted model meta line, `❯` prompt, footer shortcuts, live streaming with `Thinking…` card, arrow-key permission popup, Esc = Home
+- **Full-screen TUI (faithful opencode UI)** — `voxel` lekhlei terminal clear hoye nijosso interface khule: Home screen (recent sessions + New Chat), opencode-style panel header (`# title` + `● model · tok ~X · $0 · root` right side), message cards with left accent borders + panel background (green = You, purple = assistant/tool), muted model meta line, `❯` prompt, live streaming with animated `Thinking…` spinner + typewriter text reveal + progress bar, arrow-key permission popup, Esc = Home
+- **Contextual footer** — prothomite relevant key hint sudhu: streaming er somoy `[Esc] Interrupt`, `[Ctrl+P] Commands` palette, home e `↑/↓ Navigate`
+- **Command palette (`Ctrl+P`)** — commands er list popup: `↑/↓` select, `Enter` run, `Esc` close
+- **`Esc` = Interrupt** — AI reply asar somoy Esc chapele reply stop hoy (chat exit hoy na); arobar Esc = Home
 - **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai
 - **Free AI models** — DeepSeek V4 Flash Free, Big Pickle, MiMo, Nemotron, etc. (OpenCode Zen)
 - **AI agent tools** — AI nijei command chalao, file read/write, folder list, web search:

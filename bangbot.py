@@ -598,6 +598,9 @@ def session_list():
     return out
 
 
+BB_TERM_RAW = False
+
+
 def _utf8_reader(fd):
     dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
@@ -624,6 +627,8 @@ def raw_key():
             return "ENTER"
         if ch == "\x03":
             return "CTRL-C"
+        if ch == "\x10":
+            return "CTRL-P"
         if ch in ("\x7f", "\x08"):
             return "BACK"
         if ch == "\x1b":
@@ -682,6 +687,8 @@ def raw_key():
             return "ENTER"
         if ch == "\x03":
             return "CTRL-C"
+        if ch == "\x10":
+            return "CTRL-P"
         if ch in ("\x7f", "\x08"):
             return "BACK"
         if ch == "\t":
@@ -690,11 +697,18 @@ def raw_key():
             return ch
         return ""
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if not BB_TERM_RAW:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/save ", "/load ", "/sessions",
                 "/rm ", "/stats", "/perm", "/root", "/exit"]
+
+PALETTE_CMDS = ["/help", "/new", "/models", "/sessions", "/save", "/load", "/rm",
+                "/perm", "/root", "/stats", "/exit"]
+NEEDS_ARG = ("/save", "/load", "/rm")
+
+TYPESTEP = 24
 
 
 class UI:
@@ -721,6 +735,11 @@ class UI:
         self.reasoning = ""
         self.popup = None
         self.popup_idx = 0
+        self.palette = False
+        self.palette_idx = 0
+        self._inbuf = ""
+        self.spin = "⠋"
+        self._draw_lock = threading.Lock()
         self.resized = False
         self.quitting = False
         self._comp = -1
@@ -728,8 +747,18 @@ class UI:
     # ---------- screen ----------
 
     def enter(self):
+        global BB_TERM_RAW
         sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
         sys.stdout.flush()
+        self._old_termios = None
+        if termios and sys.stdin.isatty():
+            try:
+                fd = sys.stdin.fileno()
+                self._old_termios = termios.tcgetattr(fd)
+                tty.setraw(fd)
+                BB_TERM_RAW = True
+            except Exception:
+                self._old_termios = None
 
         def on_winch(sig, frame):
             self.resized = True
@@ -739,7 +768,37 @@ class UI:
         except (ValueError, AttributeError):
             pass
 
+        if not self.plain:
+            threading.Thread(target=self.anim_loop, daemon=True).start()
+
+    def anim_loop(self):
+        """Spinner + typewriter reveal while streaming."""
+        tick = 0
+        while not self.quitting:
+            if not self.streaming or self.plain:
+                time.sleep(0.1)
+                continue
+            tick += 1
+            if self._inbuf:
+                self.pending += self._inbuf[:TYPESTEP]
+                self._inbuf = self._inbuf[TYPESTEP:]
+                self.redraw()
+                time.sleep(0.035)
+            elif not self.pending:
+                self.spin = SPINNER[tick % len(SPINNER)]
+                self.redraw()
+                time.sleep(0.12)
+            else:
+                time.sleep(0.1)
+
     def exit(self):
+        global BB_TERM_RAW
+        if BB_TERM_RAW and self._old_termios is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_termios)
+            except Exception:
+                pass
+            BB_TERM_RAW = False
         sys.stdout.write("\x1b[?25h\x1b[?1049l")
         sys.stdout.flush()
 
@@ -789,10 +848,36 @@ class UI:
         return ("  " + C_ACC + "❯" + C_RESET + " " + C_MUTED
                 + "Type a message... (or /help)" + C_RESET)
 
-    FOOTER = "  " + C_MUTED + "[Enter] Send · [Esc] Home · [Tab] Complete · [Ctrl+C] Quit" + C_RESET
+    def footer_line(self):
+        if self.popup:
+            return "  " + C_MUTED + "←/→ Select · Enter Confirm · q Deny" + C_RESET
+        if self.palette:
+            return "  " + C_MUTED + "↑/↓ Select · Enter Run · Esc Close" + C_RESET
+        if self.streaming:
+            p = SPINNER.index(self.spin) % 9 if self.spin in SPINNER else 0
+            bar = "▰" * p + "⬝" * (8 - p)
+            return "  " + C_ACC + bar + C_RESET + "  " + C_MUTED + "[Esc] Interrupt · [Ctrl+P] Commands" + C_RESET
+        if self.route == "home":
+            return "  " + C_MUTED + "↑/↓ Navigate · Enter Open · Type = New Chat · [Ctrl+P] Commands" + C_RESET
+        parts = ["[Enter] Send"]
+        if self.buf.startswith("/"):
+            parts.append("[Tab] Complete")
+        parts.append("[Esc] Home")
+        parts.append("[Ctrl+P] Commands")
+        return "  " + C_MUTED + " · ".join(parts) + C_RESET
+
+    def palette_card(self, W):
+        out = []
+        out += self.card(C_ACC, C_BOLD + "⌘ Commands" + C_RESET, W)
+        for i, c in enumerate(PALETTE_CMDS):
+            if i == self.palette_idx:
+                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + c + C_RESET, W))
+            else:
+                out.append(self.card_row(C_MUTED, "  " + c, W))
+        return out
 
     def frame_home(self, W, H):
-        lines = [self.hdr("voxel", "v3.5.2 · " + self.model, W)]
+        lines = [self.hdr("voxel", "v3.5.3 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -809,7 +894,12 @@ class UI:
                 pad = max(1, W - 4 - dlen(label) - dlen(sub))
                 body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
         body.append("")
-        body.append("  " + C_MUTED + "↑/↓ select · Enter open · q/Ctrl+C quit · type = new chat" + C_RESET)
+        if self.palette:
+            body += self.palette_card(W)
+        else:
+            body.append("  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Ctrl+P = commands" + C_RESET)
+        for label, text in self.notices:
+            body += self.card(C_WARN, "[" + label + "] " + text, W)
         body_max = max(1, H - 3)
         if len(body) > body_max:
             body = body[-body_max:]
@@ -817,7 +907,7 @@ class UI:
             body += [""] * (body_max - len(body))
         lines += body
         lines.append(self.prompt_line(W))
-        lines.append(self.FOOTER)
+        lines.append(self.footer_line())
         return lines[:H]
 
     def frame_chat(self, W, H):
@@ -838,10 +928,14 @@ class UI:
                 body += self.plain_block(self.model, text, W)
         if self.streaming:
             if self.pending:
-                for ln in wrap_text(self.pending, max(20, W - 6)):
-                    body.append("    " + ln)
+                plines = wrap_text(self.pending, max(20, W - 6))
+                for i, ln in enumerate(plines):
+                    if i == len(plines) - 1:
+                        body.append("    " + ln + C_DIM + "▍" + C_RESET)
+                    else:
+                        body.append("    " + ln)
             else:
-                body += self.card(C_ACC, C_DIM + "Thinking…" + C_RESET, W)
+                body += self.card(C_ACC, C_DIM + " " + self.spin + " Thinking…" + C_RESET, W)
         for label, text in self.notices:
             body += self.card(C_WARN, "[" + label + "] " + text, W)
         for n in self.notes:
@@ -859,6 +953,8 @@ class UI:
             body += self.card(C_ERRC, "⚖ permission: " + kind, W)
             body += self.card(C_ERRC, C_BOLD + key + C_RESET, W)
             body += self.card(C_ERRC, "←/→ " + "  ".join(parts) + "   Enter ok · q deny", W)
+        elif self.palette:
+            body += self.palette_card(W)
         body_max = max(1, H - 3)
         if len(body) > body_max:
             body = body[-body_max:]
@@ -866,7 +962,7 @@ class UI:
             body += [""] * (body_max - len(body))
         lines += body
         lines.append(self.prompt_line(W))
-        lines.append(self.FOOTER)
+        lines.append(self.footer_line())
         return lines[:H]
 
     def redraw(self):
@@ -883,8 +979,9 @@ class UI:
         for i, line in enumerate(frame[:H]):
             out.append("\x1b[" + str(i + 1) + ";1H\x1b[K" + line)
         out.append("\x1b[" + str(H) + ";1H")
-        sys.stdout.write("".join(out))
-        sys.stdout.flush()
+        with self._draw_lock:
+            sys.stdout.write("".join(out))
+            sys.stdout.flush()
 
     # ---------- input ----------
 
@@ -906,6 +1003,9 @@ class UI:
                 self.redraw()
 
     def key_home(self, k):
+        if self.palette:
+            self.key_palette(k)
+            return
         items = [("__new__",)] + [(n,) for n, _ in session_list()]
         if k == "UP":
             self.cur = max(0, self.cur - 1)
@@ -917,6 +1017,10 @@ class UI:
             self.open_session(items[self.cur][0])
         elif k in ("CTRL-C", "q", "Q"):
             self.quitting = True
+        elif k == "CTRL-P":
+            self.palette = True
+            self.palette_idx = 0
+            self.redraw()
         elif k == "ESC":
             self.redraw()
         elif k.isprintable():
@@ -924,6 +1028,25 @@ class UI:
             self.open_session("__new__")
         else:
             self.redraw()
+
+    def key_palette(self, k):
+        if k == "UP":
+            self.palette_idx = max(0, self.palette_idx - 1)
+        elif k == "DOWN":
+            self.palette_idx = min(len(PALETTE_CMDS) - 1, self.palette_idx + 1)
+        elif k == "ENTER":
+            cmd = PALETTE_CMDS[self.palette_idx]
+            self.palette = False
+            if cmd in NEEDS_ARG:
+                self.buf = cmd + " "
+            else:
+                self.run_command(cmd)
+            self.buf = self.buf
+            self.redraw()
+            return
+        elif k in ("ESC", "CTRL-C", "CTRL-P"):
+            self.palette = False
+        self.redraw()
 
     def open_session(self, name):
         if name == "__new__":
@@ -952,6 +1075,9 @@ class UI:
         self.redraw()
 
     def key_chat(self, k):
+        if self.palette:
+            self.key_palette(k)
+            return
         if k == "ENTER":
             text = self.buf
             if text.strip():
@@ -961,6 +1087,10 @@ class UI:
                 self.send(text)
             else:
                 self.redraw()
+        elif k == "CTRL-P":
+            self.palette = True
+            self.palette_idx = 0
+            self.redraw()
         elif k == "ESC":
             if len(self.messages) > 1:
                 save_session("last", self.messages)
@@ -1136,6 +1266,8 @@ class UI:
         t.start()
         self.streaming = True
         self.cancel = False
+        self._inbuf = ""
+        self.pending = ""
         typed = []
         self.redraw()
         try:
@@ -1143,7 +1275,7 @@ class UI:
                 r, _, _ = select.select([sys.stdin], [], [], 0.15)
                 if r:
                     k = raw_key()
-                    if k in ("CTRL-C", "ESC"):
+                    if k in ("CTRL-C", "ESC", "CTRL-P"):
                         self.cancel = True
                         break
                     elif k == "BACK":
@@ -1155,19 +1287,17 @@ class UI:
                         typed.append(k)
                         self.buf = "".join(typed)
                         self.redraw()
-                pending = "".join(x for kind, x in parts if kind == "content")
-                if pending != self.pending:
-                    self.pending = pending
-                    self.buf = "".join(typed)
-                    self.redraw()
+                self._inbuf = "".join(x for kind, x in parts if kind == "content")
         except KeyboardInterrupt:
             self.cancel = True
         finally:
             self.streaming = False
-            self.pending = ""
+            self.pending = self.pending + self._inbuf
+            self._inbuf = ""
             self.reasoning = ""
             if typed and not self.cancel:
                 self.buf = "".join(typed)
+            self.redraw()
         err = result.get("err")
         used_model = result.get("model")
         if self.cancel:
@@ -1268,7 +1398,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.2" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.3" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
