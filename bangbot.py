@@ -89,6 +89,23 @@ C_RESET = "\033[0m"
 CLEAR = "\x1b[2J\x1b[H"
 SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
+# opencode theme (truecolor)
+C_BG = "\x1b[48;2;10;10;10m"
+C_PANEL = "\x1b[48;2;22;22;22m"
+C_BORDER = "\x1b[38;2;50;50;50m"
+C_TEXT = "\x1b[38;2;212;212;212m"
+C_MUTED = "\x1b[38;2;142;142;142m"
+C_ACC = "\x1b[38;2;124;58;237m"
+C_USER = "\x1b[38;2;34;197;94m"
+C_GOOD = "\x1b[38;2;52;211;153m"
+C_ERRC = "\x1b[38;2;244;135;113m"
+C_WARN = "\x1b[38;2;250;204;21m"
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x1b\[[0-9;]*[A-Za-z]")
+
+
+def plen(text):
+    return len(ANSI_RE.sub("", text))
+
 UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 TOOL_RE = re.compile(r"<(run|read|write|ls|search)((?:\s+\w+(?:=\"[^\"]*\")?)*)>(.*?)</\1>", re.S)
 ATTR_RE = re.compile(r"(\w+)(?:=\"([^\"]*)\")?")
@@ -680,106 +697,120 @@ class UI:
             self.notices = [(label, text)]
             self.redraw()
 
-    def wrap_msg(self, label, color, text, W, bracket=False):
+    # opencode-style rendering: full-width panel header bar, message cards
+    # with left accent border, plain assistant text, prompt + footer
+
+    def hdr(self, title, right, W):
+        pad = max(1, W - 4 - plen(title) - plen(right))
+        return ("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD + C_TEXT + title
+                + C_RESET + C_PANEL + " " * pad + C_MUTED + right + C_RESET)
+
+    def card_row(self, color, text, W):
+        pad = max(0, W - 6 - plen(text))
+        return "  " + color + "│" + C_RESET + C_PANEL + " " + text + " " * pad + C_RESET
+
+    def card(self, color, text, W, top_gap=False):
         out = []
-        prefix = ("[" + label + "] " if bracket else label + ": ")
-        first = True
-        for ln in wrap_text(text, max(20, W - 8)):
-            if first:
-                out.append("  " + color + prefix + ln + C_RESET)
-                first = False
-            else:
-                out.append("  " + " " * len(prefix) + ln)
-        out.append("")
+        if top_gap:
+            out.append(self.card_row(color, "", W))
+        for ln in wrap_text(text, max(20, W - 6)):
+            out.append(self.card_row(color, ln, W))
         return out
 
+    def plain_block(self, model, text, W):
+        out = []
+        for ln in wrap_text(text, max(20, W - 6)):
+            out.append("    " + ln)
+        out.append("    " + C_MUTED + model + C_RESET)
+        return out
+
+    def prompt_line(self, W):
+        disp = self.buf
+        if len(disp) > W - 8:
+            disp = "…" + disp[-(W - 9):]
+        if disp:
+            return "  " + C_ACC + "❯" + C_RESET + " " + C_TEXT + disp + C_RESET
+        return ("  " + C_ACC + "❯" + C_RESET + " " + C_MUTED
+                + "Type a message... (or /help)" + C_RESET)
+
+    FOOTER = "  " + C_MUTED + "[Enter] Send · [Esc] Home · [Tab] Complete · [Ctrl+C] Quit" + C_RESET
+
     def frame_home(self, W, H):
-        lines = []
-        lines.append(C_BOLD + C_CYAN + "  VOXEL AI" + C_RESET + C_DIM + " v3.4  -  free AI agent CLI (OpenCode Zen)" + C_RESET)
-        info = "  " + C_GREEN + "● " + self.model + C_RESET + C_DIM + "  |  " + short_path() + C_RESET
-        if self.root_on:
-            info += C_DIM + "  |  root:ON" + C_RESET
-        lines.append(info)
-        lines.append(C_DIM + "  " + "─" * max(10, W - 4) + C_RESET)
-        lines.append("")
-        lines.append("  " + C_BOLD + "Recent sessions:" + C_RESET)
-        items = [("__new__", "＋ New Chat", "start a fresh chat")] + [(n, n, rel_time(t)) for n, t in session_list()]
+        lines = [self.hdr("voxel", "v3.5 · " + self.model, W)]
+        body = [""]
+        body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
+        body.append("")
+        items = [("__new__", "＋ New Chat", "start a fresh chat")] + \
+                [(n, n, rel_time(t)) for n, t in session_list()]
         self.cur = max(0, min(self.cur, len(items) - 1))
         for i, (name, label, sub) in enumerate(items):
-            mark = "❯" if i == self.cur else " "
-            line = "  " + mark + " " + label
             if i == self.cur:
-                lines.append(C_CYAN + line + C_RESET + C_DIM + "  " + sub + C_RESET)
+                pad = max(1, W - 6 - plen(label) - plen(sub))
+                body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
+                            + C_TEXT + label + C_RESET + C_PANEL + " " * pad
+                            + C_MUTED + sub + C_RESET)
             else:
-                lines.append(C_DIM + line + C_RESET + C_DIM + "  " + sub + C_RESET)
-        lines.append("")
-        lines.append(C_DIM + "  ↑/↓ select | Enter open | q/Ctrl+C quit" + C_RESET)
-        lines.append(C_DIM + "  any character type korlei notun chat shuru" + C_RESET)
-        if len(lines) < H - 1:
-            lines += [""] * (H - 1 - len(lines))
+                pad = max(1, W - 4 - plen(label) - plen(sub))
+                body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
+        body.append("")
+        body.append("  " + C_MUTED + "↑/↓ select · Enter open · q/Ctrl+C quit · type = new chat" + C_RESET)
+        body_max = max(1, H - 3)
+        if len(body) > body_max:
+            body = body[-body_max:]
+        else:
+            body += [""] * (body_max - len(body))
+        lines += body
+        lines.append(self.prompt_line(W))
+        lines.append(self.FOOTER)
         return lines[:H]
 
     def frame_chat(self, W, H):
-        title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
-        l = "● " + C_GREEN + self.model + C_RESET + C_DIM + "  |  # " + title + C_RESET
         tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
-        r = C_DIM + f"tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}" + C_RESET
-        plain_l = "● " + self.model + "  |  # " + title
-        plain_r = f"tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
-        pad = max(1, W - 4 - len(plain_l) - len(plain_r))
-        lines = [l + " " * pad + r]
-        lines.append(C_DIM + " " + "─" * (W - 2) + C_RESET)
+        right = f"● {self.model} · tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
+        title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
+        lines = [self.hdr("# " + title, right, W)]
         body = []
         for msg in self.messages[1:]:
             role, text = msg["role"], msg["content"]
             if text.startswith("[tool "):
                 m = re.search(r"\[tool (\w+):", text)
-                body.append("  " + C_GREEN + "└─ [✓] " + (m.group(1) if m else "tool") + C_RESET)
+                body += self.card(C_MUTED, "✓ " + (m.group(1) if m else "tool"), W)
                 continue
             if role == "user":
-                label, color = "You", C_GREEN
+                body += self.card(C_USER, text, W)
             else:
-                label, color = self.model, C_CYAN
-            body += self.wrap_msg(label, color, text, W)
-        if self.streaming and self.pending:
-            body += self.wrap_msg(self.model, C_CYAN, self.pending, W)
-        elif self.streaming:
-            body.append("  " + C_DIM + "⏳ " + self.model + " thinking..." + C_RESET)
-            body.append("")
+                body += self.plain_block(self.model, text, W)
+        if self.streaming:
+            if self.pending:
+                for ln in wrap_text(self.pending, max(20, W - 6)):
+                    body.append("    " + ln)
+            else:
+                body += self.card(C_ACC, C_DIM + "Thinking…" + C_RESET, W)
         for label, text in self.notices:
-            body += self.wrap_msg(label, C_YELLOW, text, W, bracket=True)
+            body += self.card(C_WARN, "[" + label + "] " + text, W)
         for n in self.notes:
             for ln in wrap_text(n, W - 6):
-                body.append("  " + ln)
+                body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
             kind, key = self.popup
             opts = ["Yes", "No", "Always"]
             parts = []
             for i, o in enumerate(opts):
                 if i == self.popup_idx:
-                    parts.append(C_BOLD + "\x1b[7m" + o + C_RESET)
+                    parts.append(C_BOLD + "\x1b[7m " + o + " " + C_RESET)
                 else:
-                    parts.append(C_DIM + o + C_RESET)
-            body += [
-                "",
-                "  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET,
-                "  " + C_BOLD + key + C_RESET,
-                "  ←/→ " + "  ".join(parts) + "   Enter ok · q deny",
-            ]
-        body_max = max(1, H - 4)
+                    parts.append(C_MUTED + o + C_RESET)
+            body += self.card(C_ERRC, "⚖ permission: " + kind, W)
+            body += self.card(C_ERRC, C_BOLD + key + C_RESET, W)
+            body += self.card(C_ERRC, "←/→ " + "  ".join(parts) + "   Enter ok · q deny", W)
+        body_max = max(1, H - 3)
         if len(body) > body_max:
             body = body[-body_max:]
         else:
-            body = body + [""] * (body_max - len(body))
+            body += [""] * (body_max - len(body))
         lines += body
-        disp = self.buf
-        if len(disp) > W - 8:
-            disp = "…" + disp[-(W - 9):]
-        if disp:
-            lines.append("❯ " + disp)
-        else:
-            lines.append("❯ " + C_DIM + "Type your command or prompt here..." + C_RESET)
-        lines.append(C_DIM + "[Enter] Send | [Esc] Home | [Tab] Complete | [Ctrl+C] Quit" + C_RESET)
+        lines.append(self.prompt_line(W))
+        lines.append(self.FOOTER)
         return lines[:H]
 
     def redraw(self):
@@ -1173,7 +1204,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.4" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()

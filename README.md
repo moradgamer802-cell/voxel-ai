@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 
 ## Features
 
-- **Full-screen TUI (opencode × Claude Code mix)** — `voxel` lekhlei terminal clear hoye nijosso interface khule: Home screen (recent sessions + New Chat), header bar (`● model | # title | tok ~X · $0 · root`), inline `You:` / `<model>:` replies, `❯` input, footer shortcuts, live streaming, arrow-key permission popup, Esc = Home
+- **Full-screen TUI (faithful opencode UI)** — `voxel` lekhlei terminal clear hoye nijosso interface khule: Home screen (recent sessions + New Chat), opencode-style panel header (`# title` + `● model · tok ~X · $0 · root` right side), message cards with left accent borders + panel background (green = You, purple = assistant/tool), muted model meta line, `❯` prompt, footer shortcuts, live streaming with `Thinking…` card, arrow-key permission popup, Esc = Home
 - **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai
 - **Free AI models** — DeepSeek V4 Flash Free, Big Pickle, MiMo, Nemotron, etc. (OpenCode Zen)
 - **AI agent tools** — AI nijei command chalao, file read/write, folder list, web search:
