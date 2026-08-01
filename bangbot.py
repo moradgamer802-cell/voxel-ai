@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -75,6 +76,8 @@ C_MAG = "\033[95m"
 C_BOLD = "\033[1m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
+CLEAR = "\x1b[2J\x1b[H"
+SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
 UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 TOOL_RE = re.compile(r"<(run|read|write|ls|search)((?:\s+\w+(?:=\"[^\"]*\")?)*)>(.*?)</\1>", re.S)
@@ -158,8 +161,8 @@ def stream_chat(messages, model, api_key):
                 yield "content", content
 
 
-def call_chat(messages, model, api_key, fallback=True):
-    """Returns (reply_list, err, used_model). Auto-switches model on errors."""
+def call_chat(messages, model, api_key, on_chunk=None):
+    """Returns (err, used_model). Streams via on_chunk(kind, text) callback."""
     order = [model] + [m for m in FREE_MODELS if m != model]
     now = time.time()
     tried = []
@@ -172,9 +175,11 @@ def call_chat(messages, model, api_key, fallback=True):
             continue
         tried.append(m)
         try:
-            parts = list(stream_chat(messages, m, api_key))
+            for kind, text in stream_chat(messages, m, api_key):
+                if on_chunk:
+                    on_chunk(kind, text)
             MODEL_FAIL.pop(m, None)
-            return parts, None, m
+            return None, m
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")[:200]
             if e.code == 401:
@@ -186,14 +191,12 @@ def call_chat(messages, model, api_key, fallback=True):
                 continue
             time.sleep(1)
         except urllib.error.URLError as e:
-            return None, f"Network error: {e.reason}", m
+            return f"Network error: {e.reason}", m
         except Exception as e:
-            return None, f"Error: {e}", m
-        if not fallback:
-            break
+            return f"Error: {e}", m
     if key_error and len(tried) == 1:
-        return None, key_error, model
-    return None, "Shob model e rate limit/error. Kichu minute pore abar try koro.", model
+        return key_error, model
+    return "Shob model e rate limit/error. Kichu minute pore abar try koro.", model
 
 
 # ---------------- tools ----------------
@@ -406,6 +409,104 @@ def fmt_duration(sec):
     return f"{sec // 60}m {sec % 60:.0f}s"
 
 
+# ---------------- TUI ----------------
+
+def term_w():
+    try:
+        return max(44, min(shutil.get_terminal_size().columns, 120))
+    except Exception:
+        return 60
+
+
+def wrap_text(text, width):
+    lines = []
+    for para in text.split("\n"):
+        if not para:
+            lines.append("")
+            continue
+        words = para.split(" ")
+        cur = ""
+        for w in words:
+            if not cur:
+                cur = w
+            elif len(cur) + 1 + len(w) <= width:
+                cur += " " + w
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+    return lines
+
+
+def bubble_lines(label, color, text, w):
+    out = [color + label + C_RESET]
+    wrapped = wrap_text(text, w - 2) if text else ["(empty)"]
+    out.append("┌" + "─" * (w - 2) + "┐")
+    for ln in wrapped:
+        pad = max(0, w - 2 - len(ln))
+        out.append("│ " + ln + " " * pad + " │")
+    out.append("└" + "─" * (w - 2) + "┘")
+    return out
+
+
+def render(cfg, model, root_on, messages, notices, status, W):
+    inner = W - 2
+    cell = W - 6
+    out = [CLEAR]
+    title = " VOXEL AI "
+    out.append(C_CYAN + "┌─" + title + "─" * max(1, inner - len(title) - 3) + "┐" + C_RESET)
+    h2 = f" {model} | free models | root:{'ON' if root_on else 'OFF'} "
+    out.append("│" + h2 + " " * max(0, inner - len(h2)) + "│")
+    out.append("├" + "─" * inner + "┤")
+    out.append("│" + " " * inner + "│")
+    for msg in messages[1:]:
+        role = msg["role"]
+        text = msg["content"]
+        if role == "user":
+            label, color = "YOU", C_GREEN
+        elif role == "assistant":
+            label, color = "VOXEL AI", C_CYAN
+        else:
+            label, color = "SYS", C_YELLOW
+        if text.startswith("[tool "):
+            label, color = "TOOL", C_YELLOW
+        for ln in bubble_lines(label, color, text, cell):
+            out.append("│  " + ln + "  │")
+        out.append("│" + " " * inner + "│")
+    for label, text in notices:
+        for ln in bubble_lines(label, C_YELLOW, text, cell):
+            out.append("│  " + ln + "  │")
+        out.append("│" + " " * inner + "│")
+    out.append("├" + "─" * inner + "┤")
+    st = f" {status} "
+    out.append("│" + st + " " * max(0, inner - len(st)) + "│")
+    out.append("├" + "─" * inner + "┤")
+    sys.stdout.write("\n".join(out) + "\n")
+    sys.stdout.flush()
+
+
+def clr_line():
+    sys.stdout.write("\r" + "\x1b[2K")
+    sys.stdout.flush()
+
+
+def print_cell(text, W):
+    cell = W - 6
+    for ln in wrap_text(text, cell):
+        print("│  " + ln)
+
+
+def loading_box(W):
+    cell = W - 6
+    print("│  " + "┌" + "─" * (cell - 2) + "┐")
+    print("│  " + "│ " + " " * (cell - 4) + " │")
+
+
+def close_stream_box(W):
+    cell = W - 6
+    print("│  " + "└" + "─" * (cell - 2) + "┘")
+
+
 def print_streamed(parts):
     first_content = True
     for kind, text in parts:
@@ -422,26 +523,25 @@ def print_streamed(parts):
 
 
 def list_free():
-    print(C_BOLD + "Free models (OpenCode Zen):" + C_RESET)
+    lines = ["Free models (OpenCode Zen):"]
     for m in FREE_MODELS:
-        print(f"  {C_CYAN}{m}{C_RESET}")
-    print(C_DIM + "Live list: python3 bangbot.py --models" + C_RESET)
+        lines.append("  " + m)
+    lines.append("Live list: python3 bangbot.py --models")
+    return "\n".join(lines)
 
 
 def show_perms(cfg):
     perm = cfg.get("perm", {})
-    print(C_BOLD + "Permission rules:" + C_RESET)
-    print(f"  default command: {perm.get('default_cmd', 'ask')}")
-    print(f"  default rootcmd: {perm.get('default_rootcmd', 'ask')}")
-    print(f"  default file:    {perm.get('default_file', 'ask')}")
-    cmds = perm.get("cmd", {})
-    roots = perm.get("rootcmd", {})
-    files = perm.get("file", {})
-    print(f"  command rules:   {cmds or '(none)'}")
-    print(f"  root rules:      {roots or '(none)'}")
-    print(f"  file rules:      {files or '(none)'}")
-    print(C_DIM + "Set: /perm cmd|rootcmd|file <ask|always|deny> | /perm reset" + C_RESET)
-    print(C_DIM + "Specific: /perm cmd add '<cmd>' <mode> | /perm rootcmd add '<cmd>' <mode>" + C_RESET)
+    lines = ["Permission rules:"]
+    lines.append(f"  default command: {perm.get('default_cmd', 'ask')}")
+    lines.append(f"  default rootcmd: {perm.get('default_rootcmd', 'ask')}")
+    lines.append(f"  default file:    {perm.get('default_file', 'ask')}")
+    lines.append(f"  command rules:   {perm.get('cmd', {}) or '(none)'}")
+    lines.append(f"  root rules:      {perm.get('rootcmd', {}) or '(none)'}")
+    lines.append(f"  file rules:      {perm.get('file', {}) or '(none)'}")
+    lines.append("Set: /perm cmd|rootcmd|file <ask|always|deny> | /perm reset")
+    lines.append("Specific: /perm cmd add '<cmd>' <mode> | /perm rootcmd add '<cmd>' <mode>")
+    return "\n".join(lines)
 
 
 def save_session(name, messages):
@@ -467,18 +567,62 @@ def load_session(name):
 
 
 def help_text():
-    print(C_BOLD + "Commands:" + C_RESET)
-    print("  /model <id>      model change        /models      free model list")
-    print("  /new             new chat            /sessions    saved chats")
-    print("  /save [name]     save chat           /load <name> load chat")
-    print("  /rm <name>       delete session      /stats       token count")
-    print("  /perm            permission rules    /root        root toggle")
-    print("  /exit            quit")
-    print()
-    print(C_BOLD + "AI tools (AI nije use korbe):" + C_RESET)
-    print("  run/read/write/ls/search - permission prompt asbe, y/n/s/a/d diye decide koro")
-    print("  Root dorkar: AI <run root> tag use korbe, ar permission denied holeo auto-retry korbe")
-    print(C_DIM + "Multi-line: line er seshe '\\' dile continue hobe. Up/down arrow: history" + C_RESET)
+    return "\n".join([
+        "Commands:",
+        "  /model <id>      model change        /models      free model list",
+        "  /new             new chat            /sessions    saved chats",
+        "  /save [name]     save chat           /load <name> load chat",
+        "  /rm <name>       delete session      /stats       token count",
+        "  /perm            permission rules    /root        root toggle",
+        "  /exit            quit",
+        "",
+        "AI tools (AI nije use korbe):",
+        "  run/read/write/ls/search - permission prompt asbe, y/n/s/a/d diye decide koro",
+        "  Root dorkar: AI <run root> tag use korbe, ar permission denied holeo auto-retry korbe",
+        "Multi-line: line er seshe '\\' dile continue hobe.",
+    ])
+
+
+def ai_reply(messages, model, api_key, W, root_on):
+    """Streams AI reply with loading spinner. Returns (content, reasoning, err, used_model)."""
+    parts = []
+    done = threading.Event()
+
+    def on_chunk(kind, text):
+        parts.append((kind, text))
+        if kind == "content":
+            done.set()
+
+    result = {}
+
+    def worker():
+        result["err"], result["model"] = call_chat(messages, model, api_key, on_chunk)
+        done.set()
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    cell = W - 6
+    print("│  " + C_CYAN + "VOXEL AI" + C_RESET)
+    loading_box(W)
+    i = 0
+    while t.is_alive() or not result:
+        sys.stdout.write("\r│  │ ⏳ " + SPINNER[i % len(SPINNER)] + " thinking..." + C_RESET)
+        sys.stdout.flush()
+        i += 1
+        time.sleep(0.12)
+    clr_line()
+    print("│  " + "│ " + C_DIM + "done ✓" + C_RESET + " " * max(0, cell - 4 - 7) + " │")
+    close_stream_box(W)
+
+    err = result.get("err")
+    used_model = result.get("model")
+    if err:
+        return "", "", err, used_model
+
+    reasoning = "".join(text for kind, text in parts if kind == "reasoning")
+    content = "".join(text for kind, text in parts if kind == "content")
+    return content, reasoning, None, used_model
 
 
 def main():
@@ -503,39 +647,29 @@ def main():
             print(C_RED + "Fetch fail: " + str(e) + C_RESET)
         return
 
-    print(C_BOLD + C_MAG + r"""
-     _   _  ___  _  __ _____ _
-    | | | |/ _ \| |/ /| ____| |
-    | |_| | | | | ' / |  _| | |
-    |  _  | |_| | . \ | |___| |___
-    |_| |_|\___/|_|\_\|_____|_____|
-""" + C_RESET)
-    print(C_CYAN + "VOXEL AI - free AI agent for Termux" + C_RESET)
-    print(C_DIM + "Powered by OpenCode Zen free models | /help - commands" + C_RESET)
-    print()
-
     api_key = get_api_key(cfg)
-    if api_key == DEFAULT_API_KEY:
-        print(C_YELLOW + "Built-in free key use hocche." + C_RESET)
-    else:
-        print(C_GREEN + "API key: configured" + C_RESET)
-
     model = cfg.get("model") or DEFAULT_MODEL
     root_on = cfg.get("root", False)
     if root_on and not shutil.which("su"):
         print(C_YELLOW + "! Root mode on kintu 'su' paoa gelo na — rooted device nai mone hocche." + C_RESET)
-    print(C_GREEN + "Model: " + C_RESET + model + ("  | " + C_MAG + "ROOT: ON" + C_RESET if root_on else ""))
 
+    W = term_w()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    notices = [("SYS", "Hello! VOXEL AI ready. /help diye commands dekhun. AI command/file kaj korle permission prompt asbe (y/n/s/a/d).")]
     session_perm = {"cmd": set(), "file": set()}
     loaded_name = None
+    last_dt = "-"
+    status = "ready"
+
+    render(cfg, model, root_on, messages, notices, status, W)
 
     while True:
+        print("│ > ", end="", flush=True)
         try:
-            line = input(C_GREEN + "you > " + C_RESET)
+            line = input()
             while line.rstrip().endswith("\\"):
                 try:
-                    more = input(C_CYAN + "...  > " + C_RESET)
+                    more = input("│ … ")
                 except (KeyboardInterrupt, EOFError):
                     more = ""
                 line = line.rstrip()[:-1] + "\n" + more
@@ -544,7 +678,7 @@ def main():
             print()
             if len(messages) > 1:
                 save_session("last", messages)
-                print(C_DIM + "auto-saved: last" + C_RESET)
+            print(C_GREEN + "└" + "─" * (W - 3) + "┘")
             print(C_DIM + "Bye!" + C_RESET)
             break
 
@@ -554,11 +688,12 @@ def main():
         if user_input in ("/exit", "/quit"):
             if len(messages) > 1:
                 save_session("last", messages)
-                print(C_DIM + "auto-saved: last" + C_RESET)
-            print(C_DIM + "Bye!" + C_RESET)
+            print(C_GREEN + "└" + "─" * (W - 3) + "┘")
+            print(C_DIM + "Bye! (auto-saved: last)" + C_RESET)
             break
         elif user_input == "/help":
-            help_text()
+            notices = [("HELP", help_text())]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input == "/new":
             if len(messages) > 1:
@@ -567,37 +702,40 @@ def main():
             SESSION_TOKENS["in"] = SESSION_TOKENS["out"] = 0
             session_perm = {"cmd": set(), "file": set()}
             loaded_name = None
-            print(C_DIM + "New chat started (old ta 'last' e save holo)." + C_RESET)
+            notices = []
+            status = "new chat"
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input == "/stats":
-            print(f"  session input tokens:  {SESSION_TOKENS['in']}")
-            print(f"  session output tokens: {SESSION_TOKENS['out']}")
-            print(f"  total: {SESSION_TOKENS['in'] + SESSION_TOKENS['out']} (cost: $0, free models)")
+            tot = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
+            notices = [("STATS", f"input: {SESSION_TOKENS['in']} tok | output: {SESSION_TOKENS['out']} tok | total: {tot} (cost $0)")]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input == "/models":
-            list_free()
+            notices = [("MODELS", list_free())]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input == "/root":
             if not shutil.which("su"):
-                print(C_YELLOW + "su paoa gelo na — rooted device dorkar (Magisk/KernelSU)." + C_RESET)
-                cfg["root"] = False
+                notices = [("SYS", "su paoa gelo na — rooted device dorkar (Magisk/KernelSU).")]
+            else:
+                root_on = not root_on
+                cfg["root"] = root_on
                 save_config(cfg)
-                root_on = False
-                continue
-            root_on = not root_on
-            cfg["root"] = root_on
-            save_config(cfg)
-            print(C_GREEN + "Root mode: " + ("ON (su -c)" if root_on else "OFF") + C_RESET)
+                notices = [("SYS", f"Root mode: {'ON (su -c)' if root_on else 'OFF'}")]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input.startswith("/model "):
             new_model = user_input.split(None, 1)[1].strip()
             cfg["model"] = new_model
             save_config(cfg)
             model = new_model
-            print(C_GREEN + "Model changed: " + model + C_RESET)
+            notices = [("SYS", "Model changed: " + model)]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input == "/perm":
-            show_perms(cfg)
+            notices = [("PERM", show_perms(cfg))]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input.startswith("/perm "):
             parts = user_input.split()
@@ -605,33 +743,35 @@ def main():
                 if len(parts) == 3 and parts[2] in ("ask", "always", "deny"):
                     cfg.setdefault("perm", {})["default_" + parts[1]] = parts[2]
                     save_config(cfg)
-                    print(C_GREEN + f"default {parts[1]}: {parts[2]}" + C_RESET)
+                    notices = [("PERM", f"default {parts[1]}: {parts[2]}")]
                 elif len(parts) == 5 and parts[2] == "add" and parts[4] in ("ask", "always", "deny"):
                     cfg.setdefault("perm", {}).setdefault(parts[1], {})[parts[3]] = parts[4]
                     save_config(cfg)
-                    print(C_GREEN + f"rule: {parts[1]} '{parts[3]}' -> {parts[4]}" + C_RESET)
-                elif user_input.startswith("/perm reset"):
+                    notices = [("PERM", f"rule: {parts[1]} '{parts[3]}' -> {parts[4]}")]
+                elif parts[1] == "reset":
                     cfg["perm"] = {}
                     save_config(cfg)
-                    print(C_GREEN + "All permission rules reset." + C_RESET)
+                    notices = [("PERM", "All permission rules reset.")]
                 else:
-                    show_perms(cfg)
+                    notices = [("PERM", show_perms(cfg))]
             except Exception:
-                show_perms(cfg)
+                notices = [("PERM", show_perms(cfg))]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input == "/sessions":
             names = list_sessions()
-            print(C_BOLD + "Saved sessions:" + C_RESET)
-            print("  " + (", ".join(names) if names else "(kono session nai)"))
-            print(C_DIM + "Load: /load <name> | Delete: /rm <name>" + C_RESET)
+            txt = "Saved sessions: " + (", ".join(names) if names else "(kono session nai)")
+            notices = [("SESSIONS", txt + "\nLoad: /load <name> | Delete: /rm <name>")]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input.startswith("/save"):
             name = user_input.split(None, 1)[1].strip() if len(user_input.split(None, 1)) > 1 else time.strftime("chat-%Y%m%d-%H%M%S")
             if len(messages) > 1:
                 path = save_session(name, messages)
-                print(C_GREEN + "Saved: " + path + C_RESET)
+                notices = [("SYS", "Saved: " + path)]
             else:
-                print(C_YELLOW + "Chat khali, save korar moto kichu nai." + C_RESET)
+                notices = [("SYS", "Chat khali, save korar moto kichu nai.")]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input.startswith("/load "):
             name = user_input.split(None, 1)[1].strip()
@@ -639,55 +779,53 @@ def main():
             if loaded and loaded[0].get("role") == "system":
                 messages = loaded
                 loaded_name = name
-                print(C_GREEN + "Loaded: " + name + f" ({len(messages) - 1} messages)" + C_RESET)
+                notices = [("SYS", f"Loaded: {name} ({len(messages) - 1} messages)")]
             else:
-                print(C_RED + "Session paoa gelo na: " + name + C_RESET)
+                notices = [("SYS", "Session paoa gelo na: " + name)]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input.startswith("/rm "):
             name = user_input.split(None, 1)[1].strip()
             try:
                 os.remove(os.path.join(CHATS_DIR, name + ".json"))
-                print(C_GREEN + "Deleted: " + name + C_RESET)
+                notices = [("SYS", "Deleted: " + name)]
             except OSError:
-                print(C_RED + "Session nai: " + name + C_RESET)
+                notices = [("SYS", "Session nai: " + name)]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
         elif user_input.startswith("/"):
-            print(C_YELLOW + "Unknown command: " + user_input + " (type /help)" + C_RESET)
+            notices = [("SYS", "Unknown command: " + user_input + " (type /help)")]
+            render(cfg, model, root_on, messages, notices, status, W)
             continue
 
+        notices = []
         messages.append({"role": "user", "content": user_input})
+        render(cfg, model, root_on, messages, notices, status, W)
 
         for round_no in range(MAX_TOOL_ROUNDS):
-            print(C_CYAN + "bot > " + C_RESET, end="", flush=True)
             t0 = time.time()
-            parts, err, used_model = call_chat(messages, model, api_key)
+            content, reasoning, err, used_model = ai_reply(messages, model, api_key, W, root_on)
             dt = fmt_duration(time.time() - t0)
+            last_dt = dt
 
             if err:
-                print()
-                print(C_RED + err + C_RESET)
+                print(C_RED + "│  " + err + C_RESET)
                 messages.pop()
+                status = "error"
+                render(cfg, model, root_on, messages, notices, status, W)
                 break
 
-            content = "".join(text for kind, text in parts if kind == "content")
-            reasoning = "".join(text for kind, text in parts if kind == "reasoning")
             SESSION_TOKENS["in"] += est_tokens(reasoning + content)
-            SESSION_TOKENS["out"] += est_tokens(reasoning + content)
-
-            if reasoning:
-                print(C_DIM + reasoning + C_RESET + "\n" + C_DIM + "--- thinking done ---" + C_RESET + "\n")
-            for kind, text in parts:
-                if kind == "content":
-                    print(text, end="", flush=True)
-            print()
-            print(C_DIM + f"  [{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}]" + C_RESET)
+            SESSION_TOKENS["out"] += est_tokens(content)
 
             tools = parse_tools(content)
+            messages.append({"role": "assistant", "content": content})
+
             if not tools:
-                messages.append({"role": "assistant", "content": content})
+                status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
+                render(cfg, model, root_on, messages, notices, status, W)
                 break
 
-            messages.append({"role": "assistant", "content": content})
             results = []
             for name, attrs, tcontent in tools:
                 if name == "write":
@@ -696,14 +834,15 @@ def main():
                 else:
                     arg = (tcontent or attrs.get("path") or "").strip()
                     tool_content = arg
+                print("│  " + C_YELLOW + f"⚙ {name}: {arg}" + C_RESET)
                 res = exec_tool(cfg, name, arg, tool_content, session_perm, attrs)
-                print(C_DIM + truncate(res, 1200) + C_RESET)
                 results.append(f"[tool {name}: {res}]")
+                print(C_DIM + truncate(res, 1200) + C_RESET)
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
             messages.append({"role": "user", "content": "\n".join(results)})
         else:
-            print(C_YELLOW + "! Max tool rounds — new chat e /new." + C_RESET)
+            print(C_YELLOW + "! Max tool rounds — /new diye fresh koro." + C_RESET)
 
         if loaded_name and len(messages) > 1:
             save_session(loaded_name, messages)
