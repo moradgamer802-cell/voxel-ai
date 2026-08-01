@@ -7,6 +7,7 @@ Run:  python3 bangbot.py
 """
 
 import html as html_mod
+import codecs
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import unicodedata
 import threading
 import time
 import urllib.error
@@ -100,11 +102,21 @@ C_USER = "\x1b[38;2;34;197;94m"
 C_GOOD = "\x1b[38;2;52;211;153m"
 C_ERRC = "\x1b[38;2;244;135;113m"
 C_WARN = "\x1b[38;2;250;204;21m"
+CSI_FINAL_CHARS = "@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~`"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x1b\[[0-9;]*[A-Za-z]")
 
 
 def plen(text):
     return len(ANSI_RE.sub("", text))
+
+
+def dlen(text):
+    width = 0
+    for ch in ANSI_RE.sub("", text):
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+    return width
 
 UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 TOOL_RE = re.compile(r"<(run|read|write|ls|search)((?:\s+\w+(?:=\"[^\"]*\")?)*)>(.*?)</\1>", re.S)
@@ -586,6 +598,21 @@ def session_list():
     return out
 
 
+def _utf8_reader(fd):
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    def read_char():
+        while True:
+            b = os.read(fd, 1)
+            if not b:
+                return ""
+            ch = dec.decode(b)
+            if ch:
+                return ch
+
+    return read_char
+
+
 def raw_key():
     """Read one key (raw mode). Returns token: char / UP/DOWN/LEFT/RIGHT/TAB/ENTER/ESC/BACK/CTRL-C."""
     if not (termios and sys.stdin.isatty()):
@@ -608,14 +635,15 @@ def raw_key():
     old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = os.read(fd, 1).decode(errors="replace")
+        read_char = _utf8_reader(fd)
+        ch = read_char()
         if ch == "\x1b":
             r, _, _ = select.select([fd], [], [], 0.06)
             if not r:
                 return "ESC"
-            nxt = os.read(fd, 1).decode(errors="replace")
+            nxt = read_char()
             if nxt == "[":
-                k = os.read(fd, 1).decode(errors="replace")
+                k = read_char()
                 if k == "A":
                     return "UP"
                 if k == "B":
@@ -624,8 +652,17 @@ def raw_key():
                     return "RIGHT"
                 if k == "D":
                     return "LEFT"
-            elif nxt == "O":
-                k = os.read(fd, 1).decode(errors="replace")
+                if k == "M":
+                    for _ in range(3):
+                        read_char()
+                    return ""
+                while True:
+                    b = read_char()
+                    if not b or b in CSI_FINAL_CHARS:
+                        break
+                return ""
+            if nxt == "O":
+                k = read_char()
                 if k == "A":
                     return "UP"
                 if k == "B":
@@ -634,12 +671,12 @@ def raw_key():
                     return "RIGHT"
                 if k == "D":
                     return "LEFT"
-                return "ENTER"
-            return "ESC"
+                return ""
+            return ""
         if ch in ("\r", "\n"):
             r, _, _ = select.select([fd], [], [], 0.02)
             if r:
-                nxt = os.read(fd, 1).decode(errors="replace")
+                nxt = read_char()
                 if nxt not in ("\r", "\n"):
                     return nxt
             return "ENTER"
@@ -718,12 +755,12 @@ class UI:
     # with left accent border, plain assistant text, prompt + footer
 
     def hdr(self, title, right, W):
-        pad = max(1, W - 4 - plen(title) - plen(right))
+        pad = max(1, W - 4 - dlen(title) - dlen(right))
         return ("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD + C_TEXT + title
                 + C_RESET + C_PANEL + " " * pad + C_MUTED + right + C_RESET)
 
     def card_row(self, color, text, W):
-        pad = max(0, W - 6 - plen(text))
+        pad = max(0, W - 6 - dlen(text))
         return "  " + color + "│" + C_RESET + C_PANEL + " " + text + " " * pad + C_RESET
 
     def card(self, color, text, W, top_gap=False):
@@ -743,8 +780,10 @@ class UI:
 
     def prompt_line(self, W):
         disp = self.buf
-        if len(disp) > W - 8:
-            disp = "…" + disp[-(W - 9):]
+        while dlen(disp) > W - 8:
+            disp = disp[1:]
+        if dlen(disp) > W - 9:
+            disp = "…" + disp
         if disp:
             return "  " + C_ACC + "❯" + C_RESET + " " + C_TEXT + disp + C_RESET
         return ("  " + C_ACC + "❯" + C_RESET + " " + C_MUTED
@@ -753,7 +792,7 @@ class UI:
     FOOTER = "  " + C_MUTED + "[Enter] Send · [Esc] Home · [Tab] Complete · [Ctrl+C] Quit" + C_RESET
 
     def frame_home(self, W, H):
-        lines = [self.hdr("voxel", "v3.5 · " + self.model, W)]
+        lines = [self.hdr("voxel", "v3.5.2 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -762,12 +801,12 @@ class UI:
         self.cur = max(0, min(self.cur, len(items) - 1))
         for i, (name, label, sub) in enumerate(items):
             if i == self.cur:
-                pad = max(1, W - 6 - plen(label) - plen(sub))
+                pad = max(1, W - 6 - dlen(label) - dlen(sub))
                 body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
                             + C_TEXT + label + C_RESET + C_PANEL + " " * pad
                             + C_MUTED + sub + C_RESET)
             else:
-                pad = max(1, W - 4 - plen(label) - plen(sub))
+                pad = max(1, W - 4 - dlen(label) - dlen(sub))
                 body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
         body.append("")
         body.append("  " + C_MUTED + "↑/↓ select · Enter open · q/Ctrl+C quit · type = new chat" + C_RESET)
@@ -904,6 +943,10 @@ class UI:
                 self.loaded_name = name
                 self.notices = [("SYS", f"Loaded: {name} ({len(loaded) - 1} messages)")]
             else:
+                self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                self.loaded_name = None
+                self.session_perm = {"cmd": set(), "file": set()}
+                self.notes = []
                 self.notices = [("SYS", "Session paoa gelo na: " + name)]
         self.route = "chat"
         self.redraw()
@@ -1225,7 +1268,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.2" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
