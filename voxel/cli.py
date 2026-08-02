@@ -1,10 +1,9 @@
 """CLI entry point for VOXEL."""
 
 import sys
-import click
+import os
 
-from voxel.config import load_config, get_provider_config, set_provider_config
-from voxel.providers import PROVIDER_DEFAULTS
+from voxel.config import load_config, get_provider_config, set_provider_config, PROVIDER_DEFAULTS
 from voxel.ui.term import TermUI
 from voxel.tools import get_tool_definitions
 from voxel.memory import init_memory, load_memory
@@ -119,7 +118,19 @@ def chat(mode, model, cwd, continue_session):
 
     provider = get_provider(provider_name, api_key, base_url, current_model)
     agent = Agent(provider, current_mode)
+
     ui = TermUI(config, api_key, current_model)
+
+    if continue_session:
+        from voxel.session import load_session
+        loaded = load_session("last")
+        if loaded:
+            ui.messages = loaded
+            ui.loaded_name = "last"
+            click.echo("Continued last session.")
+        else:
+            click.echo("No last session found.")
+
     ui.enter()
     try:
         ui.input_loop(agent)
@@ -140,7 +151,7 @@ def read(path):
 @click.argument("command", required=True)
 @click.option("--timeout", "-t", default=30, help="Timeout in seconds")
 def exec_cmd(command, timeout):
-    """Run a shell command (exec)."""
+    """Run a shell command."""
     from voxel.tools.terminal import run_command_safe
     result = run_command_safe(command, timeout=timeout)
     click.echo(result)
