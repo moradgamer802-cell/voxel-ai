@@ -1132,21 +1132,25 @@ class UI:
         pad = max(0, W - 6 - dlen(text))
         return "  " + color + "│" + C_RESET + C_PANEL + " " + text + " " * pad + C_RESET
 
-    def box_top(self, color, title, W):
+    def box_top(self, color, title, W, lead=2, bw=None):
+        bw = bw or (W - lead)
         title = short(title, 14)
-        X = max(0, W - 7 - dlen(title))
-        return "  " + color + "┌─ " + title + " " + "─" * X + "┐" + C_RESET
+        X = max(0, bw - 5 - dlen(title))
+        return " " * lead + color + "┌─ " + title + " " + "─" * X + "┐" + C_RESET
 
-    def box_row(self, color, text, W):
-        pad = max(0, W - 6 - dlen(text))
-        return "  " + color + "│" + C_RESET + " " + text + " " * pad + " " + color + "│" + C_RESET
+    def box_row(self, color, text, W, lead=2, bw=None):
+        bw = bw or (W - lead)
+        pad = max(0, bw - 4 - dlen(text))
+        return " " * lead + color + "│" + C_RESET + " " + text + " " * pad + " " + color + "│" + C_RESET
 
-    def box_row_right(self, color, text, W):
-        pad = max(0, W - 5 - dlen(text))
-        return "  " + color + "│" + C_RESET + " " * pad + text + " " + color + "│" + C_RESET
+    def box_row_right(self, color, text, W, lead=2, bw=None):
+        bw = bw or (W - lead)
+        pad = max(0, bw - 4 - dlen(text))
+        return " " * lead + color + "│" + C_RESET + " " * pad + text + " " + color + "│" + C_RESET
 
-    def box_bottom(self, color, W):
-        return "  " + color + "└" + "─" * max(0, W - 4) + "┘" + C_RESET
+    def box_bottom(self, color, W, lead=2, bw=None):
+        bw = bw or (W - lead)
+        return " " * lead + color + "└" + "─" * max(0, bw - 2) + "┘" + C_RESET
 
     def card(self, color, text, W, top_gap=False, time_prefix=""):
         out = []
@@ -1373,8 +1377,9 @@ class UI:
                 key = f"sec:{msg_idx}:{sec_idx}"
                 sec_idx += 1
                 sec_keys.append(key)
-                inner += self.section_block(key, title or "Details", content, W,
-                                            focused=(key == self.sec_focus))
+                # v4.5: tool/cmd sections BOX ER BAIRE — dim collapsible lines (box e dekhte kharap)
+                outside += self.section_block(key, title or "Details", content, W,
+                                              focused=(key == self.sec_focus), pad="    ")
             elif kind == "meta":
                 inner.append(C_MUTED + content + C_RESET)
         if not inner:
@@ -1393,8 +1398,8 @@ class UI:
         self._sec_keys = sec_keys
         return outside + box
 
-    def section_block(self, key, title, content, W, focused=False, no_suffix=False):
-        """v4.5 collapsible dim section — lines rendered INSIDE the VOXEL box."""
+    def section_block(self, key, title, content, W, focused=False, no_suffix=False, pad=""):
+        """v4.5 collapsible dim section — pad="    " box er baire, pad="" box er vitore."""
         out = []
         expanded = key in self.expand_diffs
         c_lines = [l for l in content.split("\n") if l.strip() not in ("```", "```bash", "```text")]
@@ -1404,19 +1409,19 @@ class UI:
             header = C_MUTED + "▾ " + title + C_RESET
             if focused:
                 header += "  " + C_MUTED + "◄──" + C_RESET
-            out.append(header)
+            out.append(pad + header)
             w_lines = wrap_text(c_text, max(20, W - 8))
             # v4: line-by-line expand/collapse anim slice
             if self._sec_anim and self._sec_anim[0] == key:
                 w_lines = w_lines[:max(1, int(len(w_lines) * self._sec_anim[1]))]
             for ln in w_lines:
-                out.append(self._status_line(ln, W))
+                out.append(pad + "  " + self._status_line(ln, W))
         else:
             if focused:
-                out.append(C_ACC + "▸ " + C_RESET + C_MUTED + title + suffix + C_RESET
+                out.append(pad + C_ACC + "▸ " + C_RESET + C_MUTED + title + suffix + C_RESET
                            + "  " + C_MUTED + "◄──" + C_RESET)
             else:
-                out.append(C_MUTED + "▸ " + title + suffix + C_RESET)
+                out.append(pad + C_MUTED + "▸ " + title + suffix + C_RESET)
         return out
 
     def _status_line(self, ln, W):
@@ -1549,14 +1554,11 @@ class UI:
             return "  " + C_MUTED + "[↓ Newer] swipe down / wheel · [Ctrl+P] Commands" + C_RESET
         if self.renaming:
             return "  " + C_MUTED + "Name edit kore [Enter] Save · [Esc] Cancel" + C_RESET
-        parts = ["[Enter] Send"]
+        parts = []
         if self.buf.startswith("/"):
             parts.append("[Tab] Complete")
         elif self.buf:
             parts.append("[Tab] Plan/Build")
-        else:
-            parts.append("[Tab] Mode")
-        parts.append("[Esc] Home")
         if self._undo_msg:
             parts.append("[Ctrl+Z] Undo")
         if self.loaded_name:
@@ -1566,7 +1568,6 @@ class UI:
         else:
             parts.append("[Ctrl+E] Auto")
         parts.append("[Ctrl+P]")
-        return "  " + C_MUTED + " · ".join(parts) + C_RESET
         return "  " + C_MUTED + " · ".join(parts) + C_RESET
 
     def palette_card(self, W):
@@ -1689,7 +1690,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.2 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.3 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1768,17 +1769,19 @@ class UI:
                 # v4: tool results hidden — Commands Executed section e fold
                 continue
             if role == "user":
-                # v4.5: green YOU box — time inside, ❯ bold, 1 blank row after
-                ulines = wrap_text(text, max(20, W - 6))
-                body.append(self.box_top(C_USER, "YOU", W))
+                # v4.5: green YOU box — RIGHT side (WhatsApp style), time inside, ❯ bold
+                UW = max(28, int(W * 0.62))
+                lead = max(4, W - UW)
+                ulines = wrap_text(text, max(16, UW - 6))
+                body.append(self.box_top(C_USER, "YOU", W, lead=lead, bw=UW))
                 if time_str:
-                    body.append(self.box_row(C_USER, C_DIM + time_str + C_RESET, W))
+                    body.append(self.box_row(C_USER, C_DIM + time_str + C_RESET, W, lead=lead, bw=UW))
                 for i, ln in enumerate(ulines):
                     if i == 0:
-                        body.append(self.box_row(C_USER, C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET, W))
+                        body.append(self.box_row(C_USER, C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET, W, lead=lead, bw=UW))
                     else:
-                        body.append(self.box_row(C_USER, C_TEXT + ln + C_RESET, W))
-                body.append(self.box_bottom(C_USER, W))
+                        body.append(self.box_row(C_USER, C_TEXT + ln + C_RESET, W, lead=lead, bw=UW))
+                body.append(self.box_bottom(C_USER, W, lead=lead, bw=UW))
                 body.append("")
             else:
                 alines = self.assistant_block(msg.get("model") or self.model, text, W,
@@ -1888,11 +1891,11 @@ class UI:
             self.scroll_off = max(0, min(self.scroll_off, max_scroll))
             start = len(body) - body_max - self.scroll_off
             body = body[start:len(body) - self.scroll_off]
-            # v4: scroll indicators — ↑ more above / ↓ new below
+            # v4: scroll indicator — ↑ more above (text gone), ↓ bare marker only
             if self.scroll_off > 0:
                 body[0] = "  " + C_MUTED + "↑ " + str(self.scroll_off) + " more · PgUp" + C_RESET
             if self.scroll_off < max_scroll:
-                body[-1] = "  " + C_MUTED + "↓ new · PgDn" + C_RESET
+                body[-1] = "  " + C_MUTED + "↓" + C_RESET
         else:
             self.scroll_off = 0
             body += [""] * (body_max - len(body))
@@ -2776,7 +2779,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.2" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.3" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
