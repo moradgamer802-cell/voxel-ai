@@ -1,2 +1,26 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# App data (local only)
+~/.bangbot/
+
+# Replit-specific (not needed in repo)
+.replit
+replit.md
+.local/
+.agents/
+.cache/
+.upm/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db

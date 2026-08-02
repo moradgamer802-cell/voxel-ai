@@ -1,106 +1,173 @@
-# VOXEL AI
+<div align="center">
 
-Free AI agent CLI for Termux — amader moto AI assistant, terminal e thake. Powered by OpenCode Zen free models. Ready-to-use built-in key, install korar sathe sathe chole.
+```
+██╗   ██╗ ██████╗ ██╗  ██╗███████╗██╗      █████╗ ██╗
+██║   ██║██╔═══██╗╚██╗██╔╝██╔════╝██║     ██╔══██╗██║
+╚██╗ ██╔╝██║   ██║ ╚███╔╝ █████╗  ██║     ███████║██║
+ ╚████╔╝ ██║   ██║ ██╔██╗ ██╔══╝  ██║     ██╔══██║██║
+  ╚██╔╝  ╚██████╔╝██╔╝ ██╗███████╗███████╗██║  ██║██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝
+```
 
-## One-line Install
+**Free AI agent CLI for Termux · No key, no install, no registration**
+
+[![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Termux%20%7C%20Android-green?logo=android&logoColor=white)](https://termux.dev)
+[![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
+[![Models](https://img.shields.io/badge/Models-OpenCode%20Zen%20Free-orange)](https://opencode.ai)
+[![No Dependencies](https://img.shields.io/badge/Dependencies-None%20(stdlib%20only)-lightgrey)](bangbot.py)
+
+</div>
+
+---
+
+## ◆ কী এটা? / What is this?
+
+VOXEL AI হলো Termux (Android terminal) এর জন্য একটা **free, full-featured AI agent CLI** — Claude Code / OpenCode এর মতো clean TUI interface, সাথে AI tool execution (command চালানো, file read/write, web search)। কোনো API key লাগবে না, কোনো pip install দরকার নেই, কোনো account খুলতে হবে না।
+
+> A free, full-screen AI agent terminal app for Android (Termux). Looks like Claude Code/OpenCode, works offline-first, runs on any Python 3 terminal — no API key, no pip installs, no account needed.
+
+---
+
+## ⚡ One-line Install (Termux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/install.sh | bash
 ```
 
-Then:
+তারপর / Then:
 
 ```bash
 source ~/.bashrc
 voxel
 ```
 
-Done! Kono API key, kono pip install, kono registration lagbe na.
+---
 
-## Update
+## ✦ Features
 
-Ager one-liner abar chalao — latest version update hobe:
+### 🖥️ Full-screen TUI
+- **Clean Claude Code / OpenCode aesthetic** — `◆` indicator, `▎` left-border response cards, `─────` separator bars
+- **Animated streaming** — braille spinner + typewriter reveal, live tok/s counter
+- **Plan / Build mode** — Tab দিয়ে toggle: Plan (AI শুধু analyze করে), Build (AI file/command change করতে পারে)
+- **Adaptive layout** — portrait/landscape, compact/wide, tiny terminal সব handle করে
 
+### 🤖 AI Agent Tools
+AI নিজেই এগুলো use করে — আলাদাভাবে কিছু করতে হয় না:
+
+| Tool | কী করে |
+|------|---------|
+| `<run>command</run>` | Termux এ shell command চালায় |
+| `<run root>cmd</run>` | Root command (rooted phone এ) |
+| `<read path="/...">` | File পড়ে |
+| `<write path="/...">content</write>` | File লেখে |
+| `<ls>dir</ls>` | Folder list করে |
+| `<search>query</search>` | DuckDuckGo web search |
+
+### 🔒 Permission System
+- `<search>` / `<read>` / `<ls>` → default allow
+- `<run>` / `<write>` → arrow-key popup: **Allow once · Allow session · Always · Reject**
+- `Ctrl+E` → auto-approve toggle (সব permission auto-allow)
+- Rules: `/perm cmd add 'rm' deny` — specific command block করো
+
+### 💾 Session Manager
+- Auto-save, manual `/save [name]`, `/load`, `/sessions`, `/rm`
+- Session list on home screen with timestamps + message preview
+- `Ctrl+D` = delete session, `Ctrl+R` = rename
+
+### 🎛️ More
+- **Model picker** — `/models` দিয়ে interactive popup, free model list
+- **Diff view** — AI file লিখলে `← Edit path` diff card দেখাবে (colored +/-)
+- **Collapsible sections** — `**Summary:**` blocks collapse by default, Enter দিয়ে expand
+- **Root support** — `su -c` দিয়ে system-level commands
+- **Auto model fallback** — rate limit হলে automatically অন্য free model এ switch
+- **Touch scrollback** — swipe করে পুরনো messages দেখো
+
+---
+
+## 🆓 Free Models (OpenCode Zen)
+
+Built-in key সহ আসে — কোনো registration ছাড়াই কাজ করে:
+
+| Model | বিশেষত্ব |
+|-------|---------|
+| `deepseek-v4-flash-free` | Default, fast reasoning |
+| `big-pickle` | Strong coding |
+| `mimo-v2.5-free` | Lightweight |
+| `laguna-s-2.1-free` | Balanced |
+| `nemotron-3-ultra-free` | Large context |
+| `north-mini-code-free` | Code specialist |
+
+নিজের key set করতে (optional):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/install.sh | bash
+voxel --key sk-your-key-from-opencode.ai
 ```
 
-## Features
+---
 
-- **Full-screen TUI (faithful opencode UI)** — `voxel` lekhlei terminal clear hoye nijosso interface khule: Home screen (recent sessions + New Chat), opencode-style panel header (`# title` + `● model · tok ~X · $0` right side), message cards with left accent borders + panel background (green = You, purple = assistant/tool), muted model meta line, `❯` prompt, live streaming with animated `Thinking…` spinner + typewriter text reveal + progress bar, arrow-key permission popup, Esc = Home
-- **Contextual footer** — prothomite relevant key hint sudhu: streaming er somoy `[Esc] Interrupt`, `[Ctrl+P] Commands` palette, home e `↑/↓ Navigate`
-- **Command palette (`Ctrl+P`)** — commands er list popup: `↑/↓` select, `Enter` run, `Esc` close
-- **`Esc` = Interrupt** — AI reply asar somoy Esc chapele reply stop hoy (chat exit hoy na); arobar Esc = Home
-- **Touch scrollback** — chat e upor/dhon swipe korle purono messages dekha jay (mouse tracking on), niche swipe = notun messages; type korlei bottom e fere ase
-- **Compact tool logs** — tool er full output chat e dekha jay na: `✓ run: <cmd>` / `✗ run: <cmd> — <error>` short line
-- **Diff view on file writes** — AI file rewrite korle opencode er moto diff card dekhabe: `← Edit <path>` header + line numbers, `-` red / `+` green (new file: `← Write <path>`). Boro diff (6+ line) hoile choto kore `… N more` + `+N −N` stats + `[Enter] expand` hint dekhabe; khali `Enter` chaple full diff expand/collapse hobe
-- **Home screen** — session list with message count, last message preview, relative timestamps
-- **Chat header** — `# title · N msgs` format, shows session state
-- **Message timestamps** — `HH:MM` prefix on each message
-- **Streaming stats** — `~N tok · X tok/s` live counter during reply
-- **Styled notices** — ✗ ERR (red), ● SYS (green), ⚠ WARN (yellow), ℹ INFO (gray)
-- **Dynamic footer** — context-aware hints: streaming shows speed, typing shows mode, commands show complete
-- **Plan/Build mode (`Tab`)** — Tab chaple mode toggle: Plan (green) = AI shudhu analyze/plan kore, kono file/command change na; Build (blue) = full agent. `/mode`, `/plan`, `/build` o kaj kore
-- **Input box** — opencode er moto bordered input box, border color = mode (plan green / build blue)
-- **Smooth streaming** — reply "1ta 1ta" kore typewriter style e ashe (race-free reveal)
-- **`Thought: Xs` meta** — AI thinking shesh hole reply er upore opencode er moto `Thought: 2.9s` / `Thought: 381ms` muted line dekhabe; thinking er somoy clean `⠋ Thinking…` line
-- **`/sessions` popup** — chat theke sessions popup e dekhabe, ↑/↓ select + Enter open (Esc close)
-- **`Ctrl+P` palette** — commands list + `/exit` option (app ber hote)
-- **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai
-- **Free AI models** — DeepSeek V4 Flash Free, Big Pickle, MiMo, Nemotron, etc. (OpenCode Zen)
-- **AI agent tools** — AI nijei command chalao, file read/write, folder list, web search:
-  - `<run>command</run>` — Termux e command
-  - `<run root>command</run>` — root (su) command
-  - `<read path="/path">x</read>` / `<write path="/path">content</write>`
-  - `<ls>dir</ls>` / `<search>query</search>`
-- **Permission system** — arrow-key prompt: `← →` Allow once / Allow session / Always / Reject, `Enter` confirm
-  - Web search: default ON (permission chara) | read/ls: default allow
-  - Rules: `/perm cmd add 'rm' deny`, `/perm rootcmd add 'mount' always`, `/perm cmd always` (default)
-  - **Allow session** — current chat-e auto allow, next chat-e ask again
-  - **Ctrl+E** — auto-approve toggle (all permissions auto-allow, no prompts)
-- **Collapsible AI replies** — `**Summary:**` + `▸ Title (collapsed)` sections hidden by default (dim), empty Enter diye expand/collapse; `**Final Reply:**`/`**Result:**`/`**Location:**` bold visible, timestamp plain
-- **Root support** — rooted phone e `su -c` diye system-level kaj; non-rooted phone e automatic normal mode
-- **Auto model fallback** — rate limit/error hole onno free model e automatic switch
-- **Session manager** — `/save`, `/load`, `/sessions`, `/rm` + auto-save; session e `Ctrl+D` = delete (Yes/No confirm), `Ctrl+R` = rename (name edit kore Enter), footer e hint dekhabe
-- **Model picker** — `/models` diye interactive popup, ↑/↓ select, Enter change, current model ● marker, home + chat dono e kaj kore
-- **Opencode-style home** — ASCII art logo, clean sessions list with preview, Tip section
-- **Sessions popup** — date grouped, search, preview, footer hints (ctrl+d delete, ctrl+r rename)
-- **Double ESC interrupt** — streaming e ESC = first notice, second ESC = interrupt
-- **Web search** — DuckDuckGo (real URLs)
-- **Token counter** — `/stats`
+## 📋 Commands
 
-## Commands
-
-| Command | Kaj |
-|---|---|
-| `/help` | All commands |
+| Command | কাজ |
+|---------|-----|
+| `/help` | সব commands দেখো |
+| `/new` | নতুন chat |
 | `/model <id>` | Model change |
-| `/models` | Free model list |
-| `/new` | New chat |
-| `/save [name]` / `/load <name>` / `/sessions` / `/rm <name>` | Session manage |
-| `/perm` | Permission rules |
+| `/models` | Free model picker popup |
+| `/save [name]` | Chat save করো |
+| `/load <name>` | Saved chat load করো |
+| `/sessions` | Sessions popup |
+| `/rm <name>` | Session delete |
+| `/perm` | Permission rules দেখো/set করো |
 | `/root` | Root mode toggle |
 | `/stats` | Token count |
-| `/exit` | Exit |
+| `/undo` | Last message revert |
+| `/exit` | বের হও |
 
-Multi-line: line er seshe `\` dile continue hobe. Up/down arrow: history. `Tab`: command autocomplete.
+**Shortcuts:**
+- `Tab` — Plan/Build mode toggle
+- `Ctrl+P` — Command palette
+- `Ctrl+E` — Auto-approve toggle
+- `Ctrl+Z` — Undo last message
+- `Ctrl+D` — Delete current session
+- `Ctrl+R` — Rename current session
+- `Esc` — Interrupt streaming / Go home
+- `↑↓` — Input history / Session navigation
 
-## Requirements
+**Multi-line input:** Line এর শেষে `\` দিলে পরের লাইনে continue হবে।
 
-- Termux (free, [F-Droid](https://f-droid.org/packages/com.termux/))
-- Python (`pkg install -y python` — installer auto kore dey)
-- Root: sudhu rooted phone e `<run root>` kaj korbe
+---
 
-## Own API Key (optional)
+## 📋 Requirements
 
-Built-in free key ready-to-use. Nijer key set korte:
+- **[Termux](https://f-droid.org/packages/com.termux/)** — F-Droid থেকে install করো (Play Store version পুরনো)
+- **Python 3** — installer auto install করে দেয়
+- **Root** (optional) — `<run root>` tool ব্যবহার করতে চাইলে
+
+---
+
+## 🔧 Manual / Non-Termux Run
+
+যেকোনো Python 3 terminal এ:
 
 ```bash
-voxel --key sk-your-own-key-from-opencode.ai/auth
+python3 bangbot.py
 ```
 
-## Disclaimer
+Safe fonts mode (broken unicode terminal এ):
+```bash
+python3 bangbot.py --safe-fonts
+```
 
-- Free models have rate limits — thakle kichu minute wait kore abar try koro.
-- Repo e embedded API key ase — repo private rakhte paro, ba nijer key use koro.
-- AI chalano command er dorkar e aapnar permission nibe, kintu `always` rule dile aar jiggesh korbe na.
+---
+
+## ⚠️ Disclaimer
+
+- Free models এ rate limit আছে — limit হলে কিছুক্ষণ wait করো বা অন্য model try করো
+- Repo তে embedded API key আছে — চাইলে repo private রাখো অথবা নিজের key use করো
+- AI যে command চালাবে সেটার জন্য তোমার permission নেবে (Always দিলে আর জিজ্ঞেস করবে না)
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) — free to use, modify, and distribute.
