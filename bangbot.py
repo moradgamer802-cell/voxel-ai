@@ -96,19 +96,21 @@ C_RESET = "\033[0m"
 CLEAR = "\x1b[2J\x1b[H"
 SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
-# opencode theme (truecolor)
+# v4 semantic palette (spec: ANSI 256 + truecolor bg)
 C_BG = "\x1b[48;2;10;10;10m"
 C_PANEL = "\x1b[48;2;22;22;22m"
-C_BORDER = "\x1b[38;2;50;50;50m"
-C_TEXT = "\x1b[38;2;212;212;212m"
-C_MUTED = "\x1b[38;2;142;142;142m"
-C_ACC = "\x1b[38;2;124;58;237m"
-C_USER = "\x1b[38;2;34;197;94m"
-C_GOOD = "\x1b[38;2;52;211;153m"
-C_ERRC = "\x1b[38;2;244;135;113m"
-C_WARN = "\x1b[38;2;250;204;21m"
-C_PLAN = "\x1b[38;2;88;200;120m"     # plan mode green (opencode-like)
-C_BUILD = "\x1b[38;2;56;150;255m"    # build mode blue
+C_BORDER = "\033[38;5;240m"         # box borders
+C_TEXT = "\033[38;5;255m"           # main reply body — sole BRIGHT white
+C_MUTED = "\033[38;5;245m"          # DIM gray — headers/labels/meta
+C_GRAY = "\033[38;5;245m"           # section content — DIM gray
+C_ACC = "\033[38;5;141m"            # BRAND #a78bfa (AI accent, logo)
+C_USER = "\033[38;5;86m"            # USER green #34d399
+C_GOOD = "\033[38;5;86m"            # ● info green
+C_ERRC = "\033[38;5;203m"           # ✗ error red #f87171
+C_WARN = "\033[38;5;220m"           # ⚠ warning yellow #fbbf24
+C_PLAN = "\033[38;5;86m"            # plan mode = USER green
+C_BUILD = "\033[38;5;75m"           # build mode blue #60a5fa
+C_HIGHLIGHT = "\033[1m"             # bold headers inside body
 CSI_FINAL_CHARS = "@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~`"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x1b\[[0-9;]*[A-Za-z]")
 
@@ -132,6 +134,28 @@ STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 MODEL_FAIL = {}  # model -> last failure time
 SESSION_TOKENS = {"in": 0, "out": 0}
 ui = None  # TUI instance (set in main)
+
+# --safe-fonts: broken unicode fallback (portrait/ASCII terminals)
+SAFE_FONTS = "--safe-fonts" in sys.argv
+SAFE_GLYPHS = {
+    "▸": ">", "▾": "v", "│": "|", "❯": ">", "●": "*", "⠋": "/",
+    "▍": "|", "→": "->", "✓": "OK", "✗": "XX", "⚠": "!", "ℹ": "i",
+    "◄": "<", "▶": ">", "○": "o", "▰": "=", "⬝": ".", "█": "#",
+    "▏": "|", "▎": "|", "▌": "|", "▋": "|", "▊": "|", "▉": "|",
+    "⣾": "/", "⣽": "/", "⣻": "/", "⢿": "/", "⡿": "/", "⣟": "/",
+    "⣯": "/", "⣷": "/", "⚡": "!", "⛔": "!",
+}
+SAFE_RE = None
+
+
+def safeify(line):
+    """Broken unicode terminal e fancy glyph -> ASCII fallback."""
+    global SAFE_RE
+    if not SAFE_FONTS:
+        return line
+    if SAFE_RE is None:
+        SAFE_RE = re.compile("|".join(map(re.escape, sorted(SAFE_GLYPHS, key=len, reverse=True))))
+    return SAFE_RE.sub(lambda m: SAFE_GLYPHS[m.group(0)], line)
 
 
 def ui_note(line):
@@ -880,6 +904,26 @@ class UI:
         self.quitting = False
         self._comp = -1
         self._undo_msg = None
+        self.compact = False
+        self.tiny_input = False
+        self.tiny_rows = False
+        self.wide = False
+        self._anim_hdr = None
+        self._anim_t0 = 0.0
+        self._hdr_override = None
+
+    def anim_header(self, new_title, W):
+        """v4 session-switch header animation — typewriter reveal, 7 frames x 40ms."""
+        if self.plain or new_title == self._anim_hdr:
+            return
+        self._anim_hdr = new_title
+        for frame in range(1, 8):
+            n = max(1, int(len(new_title) * frame / 7))
+            self._hdr_override = new_title[:n]
+            self.redraw()
+            time.sleep(0.04)
+        self._hdr_override = None
+        self.redraw()
 
     # ---------- screen ----------
 
@@ -1182,6 +1226,15 @@ class UI:
             disp = disp[1:]
         if dlen(disp) > W - 13:
             disp = "…" + disp
+        if self.tiny_input:
+            if disp:
+                inner = C_TEXT + disp + C_RESET + C_ACC + "▍" + C_RESET
+                plain = "❯ " + disp + "▍"
+            else:
+                inner = C_MUTED + "Type..." + C_RESET + C_ACC + "▍" + C_RESET
+                plain = "❯ Type...▍"
+            pad = max(1, W - 4 - dlen(plain))
+            return ["  " + color + "❯" + C_RESET + " " + inner + " " * pad]
         if disp:
             inner = C_TEXT + disp + C_RESET + C_ACC + "▍" + C_RESET
             plain = "❯ " + disp + "▍"
@@ -1341,17 +1394,20 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.27 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.0 · " + self.model, W)]
         body = [""]
-        # ASCII art logo
-        logo = [
-            "  " + C_BOLD + C_TEXT + "██    ██  ██████  ██   ██ ███████ ██" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "██    ██ ██    ██  ██ ██  ██      ██" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "██    ██ ██    ██   ███   █████   ██" + C_RESET,
-            "  " + C_BOLD + C_TEXT + " ██  ██  ██    ██  ██ ██  ██      ██" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "  ████    ██████  ██   ██ ███████ ███████" + C_RESET,
-        ]
-        body.extend(logo)
+        # ASCII art logo (hidden on tiny rows — portrait compact)
+        if self.tiny_rows:
+            body.append("  " + C_BOLD + C_TEXT + "VOXEL AI" + C_RESET)
+        else:
+            logo = [
+                "  " + C_BOLD + C_TEXT + "██    ██  ██████  ██   ██ ███████ ██" + C_RESET,
+                "  " + C_BOLD + C_TEXT + "██    ██ ██    ██  ██ ██  ██      ██" + C_RESET,
+                "  " + C_BOLD + C_TEXT + "██    ██ ██    ██   ███   █████   ██" + C_RESET,
+                "  " + C_BOLD + C_TEXT + " ██  ██  ██    ██  ██ ██  ██      ██" + C_RESET,
+                "  " + C_BOLD + C_TEXT + "  ████    ██████  ██   ██ ███████ ███████" + C_RESET,
+            ]
+            body.extend(logo)
         body.append("")
         # Sessions list
         body.append("  " + C_MUTED + "Sessions" + C_RESET)
@@ -1407,12 +1463,19 @@ class UI:
 
     def frame_chat(self, W, H):
         tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
-        right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0"
-        title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
+        title = self._hdr_override or self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
         msg_count = len([m for m in self.messages if m.get("role") != "system"])
-        if msg_count > 0:
-            title += f" · {msg_count} msgs"
-        lines = [self.hdr("# " + title, right, W)]
+        if self.compact:
+            right = "●" + ("P" if self.mode == "plan" else "B") + "·" + self.short_model() \
+                    + "·" + self.fmt_tok(tok) + "·$0"
+            if msg_count > 0:
+                title += f"·{msg_count}m"
+            lines = [self.hdr("# " + title, right, W)]
+        else:
+            right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0"
+            if msg_count > 0:
+                title += f" · {msg_count} msgs"
+            lines = [self.hdr("# " + title, right, W)]
         body = []
         for mi, msg in enumerate(self.messages[1:]):
             role, text = msg["role"], msg["content"]
@@ -1524,6 +1587,7 @@ class UI:
         if self.plain:
             return
         W, H = term_size()
+        self.adaptive(W, H)
         if self.route == "home":
             frame = self.frame_home(W, H)
         else:
@@ -1532,11 +1596,32 @@ class UI:
             frame.append("")
         out = []
         for i, line in enumerate(frame[:H]):
-            out.append("\x1b[" + str(i + 1) + ";1H\x1b[K" + line)
+            out.append("\x1b[" + str(i + 1) + ";1H\x1b[K" + safeify(line))
         out.append("\x1b[" + str(H) + ";1H")
         with self._draw_lock:
             sys.stdout.write("".join(out))
             sys.stdout.flush()
+
+    def adaptive(self, W, H):
+        """v4 adaptive layout — portrait/landscape state (spec section 15)."""
+        self.compact = W <= 50          # compact header mode
+        self.tiny_input = W <= 45       # single-row input, no border
+        self.tiny_rows = H <= 20        # no-logo home, always-collapsed sections
+        self.wide = W >= 70             # full header mode
+
+    def fmt_tok(self, n):
+        if n >= 1_000_000:
+            return f"~{n / 1e6:.1f}M"
+        if n >= 1000:
+            return f"~{n / 1e3:.1f}K"
+        return f"~{n}"
+
+    def short_model(self):
+        parts = self.model.split("-")
+        if len(parts) >= 2 and len(parts[0]) >= 2:
+            ab = {"deepseek": "ds", "nemotron": "nt", "north": "no", "laguna": "lg"}.get(parts[0], parts[0][:2])
+            return ab + "-" + parts[1][:4]
+        return self.model[:6]
 
     # ---------- input ----------
 
@@ -1666,6 +1751,8 @@ class UI:
                 self.notices = [("SYS", "Session paoa gelo na: " + name)]
         self.route = "chat"
         self.redraw()
+        W, _ = term_size()
+        self.anim_header(self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat"), W)
 
     def key_chat(self, k):
         if self.palette:
@@ -2190,7 +2277,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.27" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.0" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
