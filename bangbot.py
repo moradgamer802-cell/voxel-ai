@@ -420,10 +420,10 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
             return "[Tool run: user denied]", None
         if wants_root and not shutil.which("su"):
             return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]", None
-        ui_note(C_DIM + f"$ {truncate(' '.join(arg.split()), 55)}" + ("  (root)" if wants_root else "") + C_RESET)
+        ui_note(C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET)
         code, out, shown = run_command(arg, root)
         if root:
-            ui_note(C_DIM + f"(root: su -c '{truncate(' '.join(shown.split()), 55)}')" + C_RESET)
+            ui_note(C_DIM + f"(root mode: su -c {shlex.quote(shown)})" + C_RESET)
         if not wants_root and not cfg.get("root") and code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ) and shutil.which("su"):
@@ -480,7 +480,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
             return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]", None
 
     if name == "search":
-        ui_note(C_DIM + f"🔎 searching: {truncate(' '.join(content.split()), 55)}")
+        ui_note(C_DIM + f"🔎 searching: {content}")
         try:
             res = ddg_search(content)
         except Exception as e:
@@ -1026,12 +1026,10 @@ class UI:
         return False
 
     def assistant_block(self, model, text, W, think=None, time_prefix=""):
-        """Step lines (→ / + / <run>/<write> tags) compact, real reply normal."""
+        """Step lines (→ / +) compact, real reply normal."""
         steps = []
         rest = []
-        tag_re = re.compile(r"<(run|write|read|search)[^>]*>(.*?)</\1>", re.S)
-        text2 = tag_re.sub(lambda m: "→ " + m.group(1) + ": " + " ".join(m.group(2).split())[:60], text)
-        for ln in text2.split("\n"):
+        for ln in text.split("\n"):
             s = ln.strip()
             if s.startswith("→") or s.startswith("+ ") or s.startswith("+Thought"):
                 steps.append(s)
@@ -1252,7 +1250,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.22 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.21 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1377,8 +1375,7 @@ class UI:
             if isinstance(n, dict):
                 body += self.diff_card(n, W)
             else:
-                flat = " ".join(n.split())
-                for ln in wrap_text(truncate(flat, W - 6), W - 6):
+                for ln in wrap_text(n, W - 6):
                     body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
             kind, key = self.popup
@@ -2104,7 +2101,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.22" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.21" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
