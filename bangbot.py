@@ -930,6 +930,12 @@ class UI:
         self._notice_t = 0.0
         self._mode_flash = 0.0
         self._approve_pop = 0.0
+        self._popup_birth = 0.0
+        self._route_fade = 0.0
+        self.palette_filter = ""
+        self._palette_prev = -1
+        self._palette_t = 0.0
+        self.sess_expand = None
 
     def anim_header(self, new_title, W):
         """v4 session-switch header animation — typewriter reveal, 7 frames x 40ms."""
@@ -942,6 +948,24 @@ class UI:
             self.redraw()
             time.sleep(0.04)
         self._hdr_override = None
+        self.redraw()
+
+    def _popup_birth_anim(self):
+        """v4: popup birth — 4-frame grow-in (120ms)."""
+        for f in range(1, 5):
+            self._popup_birth = f / 4
+            self.redraw()
+            time.sleep(0.03)
+        self._popup_birth = 0.0
+        self.redraw()
+
+    def _route_transition(self):
+        """v4: home<->chat fade — 3 dim frames (105ms)."""
+        for _ in range(3):
+            self._route_fade = time.time()
+            self.redraw()
+            time.sleep(0.035)
+        self._route_fade = 0.0
         self.redraw()
 
     # ---------- screen ----------
@@ -1423,10 +1447,18 @@ class UI:
 
     def palette_card(self, W):
         out = []
-        out += self.card(C_ACC, C_BOLD + "⌘ Commands" + C_RESET, W)
-        for i, c in enumerate(PALETTE_CMDS):
+        filter_txt = self.palette_filter
+        shown = [c for c in PALETTE_CMDS if filter_txt in c]
+        title = "⌘ Commands" + (f" /{filter_txt}" if filter_txt else "")
+        out += self.card(C_ACC, C_BOLD + title + C_RESET, W)
+        if self.palette_idx >= len(shown):
+            self.palette_idx = 0
+        for i, c in enumerate(shown):
             if i == self.palette_idx:
                 out.append(self.card_row(C_ACC, C_BOLD + "❯ " + c + C_RESET, W))
+            elif self._palette_t and time.time() - self._palette_t < 0.12 and i == self._palette_prev:
+                # v4: cursor slide — old row briefly dims with ❯
+                out.append(self.card_row(C_DIM, "❯ " + c, W))
             else:
                 out.append(self.card_row(C_MUTED, "  " + c, W))
         return out
@@ -1463,13 +1495,17 @@ class UI:
         for date, sessions in by_date.items():
             out.append(self.card_row(C_ACC, C_BOLD + date + C_RESET, W))
             for name, count, preview in sessions:
-                label = f"{name} — {preview[:25]}" if preview else name
-                if len(sessions) > 1 and name == self.sess_pick[self.sess_idx][0]:
-                    out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
-                elif name == self.sess_pick[self.sess_idx][0]:
-                    out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
-                else:
-                    out.append(self.card_row(C_MUTED, "  " + label, W))
+                selected = name == self.sess_pick[self.sess_idx][0]
+                marker = "▶" if selected else "○"
+                label = f"{marker} {name}" + (f" — {preview[:25]}" if preview else "")
+                out.append(self.card_row(C_ACC if selected else C_MUTED,
+                                         (C_BOLD if selected else "") + label + C_RESET, W))
+                # v4: preview expand — selected session er preview lines
+                if selected and self.sess_expand == name:
+                    loaded = load_session(name) or []
+                    for msg in loaded[1:4]:
+                        if msg.get("role") in ("user", "assistant"):
+                            out.append(self.card_row(C_DIM, "    " + short(msg.get("content", ""), 50), W))
         out.append(self.card_row(C_MUTED, "", W))
         out.append(self.card_row(C_MUTED, "pin/unpin " + C_BOLD + "ctrl+f" + C_RESET + "  delete " + C_BOLD + "ctrl+d" + C_RESET + "  rename " + C_BOLD + "ctrl+r" + C_RESET, W))
         return out
@@ -1479,13 +1515,21 @@ class UI:
             self.sess_idx = max(0, self.sess_idx - 1)
         elif k == "DOWN":
             self.sess_idx = min(len(self.sess_pick) - 1, self.sess_idx + 1)
+        elif k == "RIGHT":
+            # v4: preview expand of selected session
+            name = self.sess_pick[self.sess_idx][0]
+            self.sess_expand = name if self.sess_expand != name else None
+        elif k == "LEFT":
+            self.sess_expand = None
         elif k == "ENTER":
             name = self.sess_pick[self.sess_idx][0]
             self.sess_pick = None
+            self.sess_expand = None
             self.open_session(name)
             return
         elif k in ("ESC", "CTRL-C", "CTRL-P"):
             self.sess_pick = None
+            self.sess_expand = None
         self.redraw()
 
     def model_pick_card(self, W):
@@ -1521,7 +1565,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.3 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.4 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1636,6 +1680,7 @@ class UI:
                     n = C_BOLD + n + C_RESET
                 for ln in wrap_text(short(n, W - 6), W - 6):
                     body.append("  " + C_DIM + ln + C_RESET)
+        pop_all = []
         if self.popup:
             kind, key = self.popup
             if kind == "perm":
@@ -1647,16 +1692,23 @@ class UI:
             parts = []
             for i, o in enumerate(opts):
                 if i == self.popup_idx:
-                    parts.append(C_BOLD + "\x1b[7m" + opt_colors[i] + " " + o + " " + C_RESET)
+                    # v4: BRAND selection bg
+                    parts.append(C_BOLD + "\x1b[48;5;141m\x1b[38;5;0m " + o + " " + C_RESET)
                 else:
                     parts.append(opt_colors[i] + o + C_RESET)
-            body += self.card(C_ERRC, C_WARN + "⚠ Permission required" + C_RESET, W)
-            body += self.card(C_ERRC, C_DIM + " - Access " + C_BOLD + C_TEXT + key + C_RESET, W)
+            pop_all += self.card(C_ERRC, C_WARN + "⚠ Permission required" + C_RESET, W)
+            pop_all += self.card(C_ERRC, C_DIM + " - Access " + C_BOLD + C_TEXT + key + C_RESET, W)
             if kind == "perm" and "/" in key:
                 pattern = key.rsplit("/", 1)[0] + "/*"
-                body += self.card(C_DIM, C_DIM + "  Patterns: " + C_TEXT + pattern + C_RESET, W)
+                pop_all += self.card(C_DIM, C_DIM + "  Patterns: " + C_TEXT + pattern + C_RESET, W)
             hint = "   ←/→ select · enter confirm" if kind == "perm" else "   Enter confirm · Esc cancel"
-            body += self.card(C_ERRC, "  ".join(parts) + hint, W)
+            pop_all += self.card(C_ERRC, "  ".join(parts) + hint, W)
+        if pop_all:
+            if self._popup_birth > 0:
+                # v4: birth anim — popup grows in line by line
+                body += pop_all[:max(1, int(len(pop_all) * self._popup_birth))]
+            else:
+                body += pop_all
         elif self.palette:
             body += self.palette_card(W)
         elif self.sess_pick:
@@ -1679,6 +1731,10 @@ class UI:
         else:
             self.scroll_off = 0
             body += [""] * (body_max - len(body))
+        if pop_all and body:
+            # v4: backdrop dim — background content dimmed behind popup
+            body[0] = "\x1b[2m" + body[0]
+            body[-1] += "\x1b[22m"
         if self.streaming and self._esc_pending:
             body.append("  " + C_WARN + "⚠ ESC abar chaple interrupt hobe (Ctrl+C = direct)" + C_RESET)
         lines += body
@@ -1704,6 +1760,8 @@ class UI:
         for i, line in enumerate(frame[:H]):
             out.append("\x1b[" + str(i + 1) + ";1H\x1b[K" + safeify(line))
         out.append("\x1b[" + str(H) + ";1H")
+        if self._route_fade and time.time() - self._route_fade < 0.1:
+            out = ["\x1b[2m"] + out + ["\x1b[22m"]
         with self._draw_lock:
             sys.stdout.write("".join(out))
             sys.stdout.flush()
@@ -1784,22 +1842,37 @@ class UI:
             self.redraw()
 
     def key_palette(self, k):
+        shown = [c for c in PALETTE_CMDS if self.palette_filter in c]
         if k == "UP":
+            self._palette_prev = self.palette_idx
             self.palette_idx = max(0, self.palette_idx - 1)
+            self._palette_t = time.time()
         elif k == "DOWN":
-            self.palette_idx = min(len(PALETTE_CMDS) - 1, self.palette_idx + 1)
+            self._palette_prev = self.palette_idx
+            self.palette_idx = min(len(shown) - 1, self.palette_idx + 1)
+            self._palette_t = time.time()
         elif k == "ENTER":
-            cmd = PALETTE_CMDS[self.palette_idx]
+            cmd = shown[self.palette_idx]
             self.palette = False
+            self.palette_filter = ""
+            self._palette_t = 0.0
             if cmd in NEEDS_ARG:
                 self.buf = cmd + " "
             else:
                 self.run_command(cmd)
-            self.buf = self.buf
             self.redraw()
             return
+        elif k == "BACK":
+            self.palette_filter = self.palette_filter[:-1]
+            self.palette_idx = 0
+        elif k.isprintable():
+            # v4: filter-as-you-type
+            self.palette_filter += k
+            self.palette_idx = 0
         elif k in ("ESC", "CTRL-C", "CTRL-P"):
             self.palette = False
+            self.palette_filter = ""
+            self._palette_t = 0.0
         self.redraw()
 
     def key_cmd_pick(self, k):
@@ -1855,8 +1928,13 @@ class UI:
                 self.session_perm = {"cmd": set(), "file": set()}
                 self.notes = []
                 self.notices = [("SYS", "Session paoa gelo na: " + name)]
-        self.route = "chat"
-        self.redraw()
+        if self.route != "chat":
+            self.route = "chat"
+            # v4: home->chat fade transition (typing e bar-bar na, sudhu first)
+            self._route_transition()
+        else:
+            self.route = "chat"
+            self.redraw()
         W, _ = term_size()
         self.anim_header(self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat"), W)
 
@@ -1945,7 +2023,8 @@ class UI:
             self.notes = []
             self.route = "home"
             self.cur = 0
-            self.redraw()
+            # v4: chat->home fade transition
+            self._route_transition()
         elif k == "CTRL-C":
             self.quitting = True
         elif k == "BACK":
@@ -2013,6 +2092,7 @@ class UI:
         """Yes/No confirm popup. Returns True on Yes."""
         self.popup = ("confirm", prompt)
         self.popup_idx = 0
+        self._popup_birth_anim()
         try:
             while True:
                 self.redraw()
@@ -2391,6 +2471,7 @@ class UI:
     def perm_popup(self, kind, key):
         self.popup = (kind, key)
         self.popup_idx = 0
+        self._popup_birth_anim()
         try:
             while True:
                 self.redraw()
@@ -2428,7 +2509,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.3" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.4" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
