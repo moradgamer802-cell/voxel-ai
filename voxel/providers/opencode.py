@@ -1,62 +1,114 @@
-"""OpenCode Zen provider with fallback logic."""
+"""OpenCode Zen provider implementation."""
 
+import json
+import os
 import time
 import urllib.error
-from typing import List, Tuple
+import urllib.parse
+import urllib.request
+from typing import Iterator, List
 
 from voxel.providers.base import BaseProvider, Message
-from voxel.constants import FREE_MODELS
+from voxel.constants import FREE_MODELS, API_BASE
 
 
-class ProviderPool:
-    def __init__(self, api_key: str, base_url: str, start_model: str):
-        self.api_key = api_key
-        self.base_url = base_url
-        self.current_model = start_model
-        self._fail = {}
+class OpenCodeProvider(BaseProvider):
+    def chat(self, messages: List[Message], stream: bool = True) -> Iterator[tuple]:
+        body = json.dumps({
+            "model": self.model,
+            "messages": [m.to_dict() for m in messages],
+            "stream": True,
+        }).encode()
 
-    def chat(self, messages: List[Message]) -> Tuple[str, str, str]:
-        """Returns (content, reasoning, error)."""
-        order = [self.current_model] + [m for m in FREE_MODELS if m != self.current_model]
-        now = time.time()
-        tried = []
-        key_error = None
+        req = urllib.request.Request(
+            API_BASE + "/chat/completions",
+            data=body,
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {self.api_key}")
+        req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
 
-        for m in order:
-            if m in tried:
-                continue
-            if now - self._fail.get(m, 0) < 60:
-                tried.append(m)
-                continue
-            tried.append(m)
-            try:
-                from voxel.providers.opencode import OpenCodeProvider
-                p = OpenCodeProvider(self.api_key, self.base_url, m)
-                parts = []
-                reasoning_parts = []
-                for kind, text in p.chat(messages):
-                    if kind == "reasoning":
-                        reasoning_parts.append(text)
-                    else:
-                        parts.append(text)
-                self._fail.pop(m, None)
-                self.current_model = m
-                return "".join(parts), "".join(reasoning_parts), None
-            except urllib.error.HTTPError as e:
-                body = e.read().decode(errors="replace")[:200]
-                if e.code == 401:
-                    key_error = "API key invalid"
-                    self._fail[m] = now
+        resp = urllib.request.urlopen(req, timeout=180)
+        buffer = b""
+        while True:
+            chunk = resp.read(1024)
+            if not chunk:
+                break
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                line = line.strip()
+                if not line or not line.startswith(b"data:"):
                     continue
-                if e.code in (429, 403, 404, 400):
-                    self._fail[m] = now
+                data = line[5:].strip()
+                if data == b"[DONE]":
+                    return
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
                     continue
-                return "", "", f"HTTP {e.code}: {body}"
-            except urllib.error.URLError as e:
-                return "", "", f"Network error: {e.reason}"
-            except Exception as e:
-                return "", "", f"Error: {e}"
+                choices = obj.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                content = delta.get("content")
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    yield "reasoning", reasoning
+                if content:
+                    yield "content", content
 
-        if key_error and len(tried) == 1:
-            return "", "", key_error
-        return "", "", "All models rate-limited/error. Try later."
+    def chat_json(self, messages, tools=None):
+        body = json.dumps({
+            "model": self.model,
+            "messages": [m.to_dict() for m in messages],
+            "stream": False,
+            "tools": tools or [],
+            "tool_choice": "auto" if tools else None,
+        }).encode()
+
+        req = urllib.request.Request(
+            API_BASE + "/chat/completions",
+            data=body,
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {self.api_key}")
+        req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+
+        resp = urllib.request.urlopen(req, timeout=180)
+        return json.loads(resp.read().decode())
+
+
+def fetch_models(api_key: str = "") -> List[str]:
+    req = urllib.request.Request(API_BASE + "/models")
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode())
+    return [m["id"] for m in data.get("data", [])]
+
+
+PROVIDER_DEFAULTS = {
+    "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+    "anthropic": {"base_url": "https://api.anthropic.com", "model": "claude-3-5-sonnet-20240620"},
+    "ollama": {"base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-1.5-pro"},
+}
+
+
+def get_provider(name: str, api_key: str, base_url: str, model: str):
+    name = name.lower()
+    if name == "opencode" or name == "openai":
+        return OpenCodeProvider(api_key, base_url, model)
+    if name == "anthropic":
+        from voxel.providers.anthropic import AnthropicProvider
+        return AnthropicProvider(api_key, base_url, model)
+    if name == "ollama":
+        from voxel.providers.ollama import OllamaProvider
+        return OllamaProvider(api_key, base_url, model)
+    if name == "gemini":
+        from voxel.providers.gemini import GeminiProvider
+        return GeminiProvider(api_key, base_url, model)
+    return OpenCodeProvider(api_key, base_url, model)

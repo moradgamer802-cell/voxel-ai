@@ -90,6 +90,7 @@ def run(prompt, auto, mode, model, output_format, quiet, continue_session, cwd):
         else:
             click.echo(response)
     except Exception as e:
+        import traceback; traceback.print_exc()
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
@@ -139,8 +140,8 @@ def read(path):
 @cli.command()
 @click.argument("command", required=True)
 @click.option("--timeout", "-t", default=30, help="Timeout in seconds")
-def run_cmd(command, timeout):
-    """Run a shell command."""
+def exec_cmd(command, timeout):
+    """Run a shell command (exec)."""
     from voxel.tools.terminal import run_command_safe
     result = run_command_safe(command, timeout=timeout)
     click.echo(result)

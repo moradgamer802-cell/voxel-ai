@@ -21,9 +21,9 @@ def ensure_dirs():
 def default_config():
     return {
         "provider": "openai",
-        "api_key": "",
-        "base_url": "https://api.openai.com/v1",
-        "model": "gpt-4o-mini",
+        "api_key": "sk-PKOWRt2391BL0MP3W90yaG8qx4vofQJQgigJreBBYjrArj0lwuU1HkWUqOHgDGHP",
+        "base_url": "https://opencode.ai/zen/v1",
+        "model": "deepseek-v4-flash-free",
         "mode": "code",
         "auto_compact": True,
         "shell": {
@@ -102,12 +102,3 @@ def get_api_key(cfg):
 
 
 PROVIDER_DEFAULTS = {
-    "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
-    "anthropic": {"base_url": "https://api.anthropic.com", "model": "claude-3-5-sonnet-20240620"},
-    "ollama": {"base_url": "http://localhost:11434/v1", "model": "llama3.1"},
-    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-1.5-pro"},
-}
-
-
-def get_api_key(cfg):
-    return os.environ.get("OPENCODE_API_KEY") or cfg.get("api_key", "").strip() or ""
