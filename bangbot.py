@@ -852,6 +852,8 @@ class UI:
         self.palette_idx = 0
         self.sess_pick = None
         self.sess_idx = 0
+        self.model_pick = None
+        self.model_idx = 0
         self.expand_diffs = set()
         self.renaming = False
         self.scroll_off = 0
@@ -1130,8 +1132,40 @@ class UI:
             self.sess_pick = None
         self.redraw()
 
+    def model_pick_card(self, W):
+        out = []
+        out += self.card(C_ACC, C_BOLD + "🤖 Models — select kore Enter (Esc close)" + C_RESET, W)
+        current = self.model
+        for i, m in enumerate(FREE_MODELS):
+            label = m
+            if m == current:
+                label += " ●"
+            if i == self.model_idx:
+                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
+            else:
+                out.append(self.card_row(C_MUTED, "  " + label, W))
+        return out
+
+    def key_model_pick(self, k):
+        if k == "UP":
+            self.model_idx = max(0, self.model_idx - 1)
+        elif k == "DOWN":
+            self.model_idx = min(len(FREE_MODELS) - 1, self.model_idx + 1)
+        elif k == "ENTER":
+            new_model = FREE_MODELS[self.model_idx]
+            self.model = new_model
+            self.cfg["model"] = new_model
+            save_config(self.cfg)
+            self.model_pick = None
+            self.notice("SYS", "Model changed: " + new_model)
+            self.redraw()
+            return
+        elif k in ("ESC", "CTRL-C", "CTRL-P"):
+            self.model_pick = None
+        self.redraw()
+
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.11 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.12 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -1154,6 +1188,8 @@ class UI:
         body.append("")
         if self.palette:
             body += self.palette_card(W)
+        elif self.model_pick:
+            body += self.model_pick_card(W)
         else:
             body.append("  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Ctrl+P = commands" + C_RESET)
         for label, text in self.notices:
@@ -1260,6 +1296,8 @@ class UI:
             body += self.palette_card(W)
         elif self.sess_pick:
             body += self.session_pick_card(W)
+        elif self.model_pick:
+            body += self.model_pick_card(W)
         body_max = max(1, H - 5)
         if len(body) > body_max:
             max_scroll = len(body) - body_max
@@ -1314,6 +1352,9 @@ class UI:
     def key_home(self, k):
         if self.palette:
             self.key_palette(k)
+            return
+        if self.model_pick:
+            self.key_model_pick(k)
             return
         items = [("__new__",)] + [(n,) for n, _, _, _ in session_list()]
         if k == "UP":
@@ -1391,6 +1432,9 @@ class UI:
             return
         if self.sess_pick:
             self.key_sess_pick(k)
+            return
+        if self.model_pick:
+            self.key_model_pick(k)
             return
         if k in ("WHEEL_UP", "WHEEL_DOWN"):
             self.scroll_off += 4 if k == "WHEEL_UP" else -4
@@ -1581,7 +1625,11 @@ class UI:
             self.notice("STATS", f"input: {SESSION_TOKENS['in']} tok | output: {SESSION_TOKENS['out']} tok | total: {tot} (cost $0)")
             return True
         if user_input == "/models":
-            self.notice("MODELS", list_free())
+            if self.plain:
+                self.notice("MODELS", list_free())
+            else:
+                self.model_pick = FREE_MODELS
+                self.model_idx = 0
             return True
         if user_input == "/root":
             if not shutil.which("su"):
@@ -1863,7 +1911,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.11" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.12" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()

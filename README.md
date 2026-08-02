@@ -60,6 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 - **Root support** — rooted phone e `su -c` diye system-level kaj; non-rooted phone e automatic normal mode
 - **Auto model fallback** — rate limit/error hole onno free model e automatic switch
 - **Session manager** — `/save`, `/load`, `/sessions`, `/rm` + auto-save; session e `Ctrl+D` = delete (Yes/No confirm), `Ctrl+R` = rename (name edit kore Enter), footer e hint dekhabe
+- **Model picker** — `/models` diye interactive popup, ↑/↓ select, Enter change, current model ● marker, home + chat dono e kaj kore
 - **Web search** — DuckDuckGo (real URLs)
 - **Token counter** — `/stats`
 
