@@ -90,7 +90,6 @@ def run(prompt, auto, mode, model, output_format, quiet, continue_session, cwd):
         else:
             click.echo(response)
     except Exception as e:
-        import traceback; traceback.print_exc()
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 

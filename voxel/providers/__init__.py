@@ -59,6 +59,27 @@ class OpenCodeProvider(BaseProvider):
                 if content:
                     yield "content", content
 
+    def chat_json(self, messages, tools=None):
+        body = json.dumps({
+            "model": self.model,
+            "messages": [m.to_dict() for m in messages],
+            "stream": False,
+            "tools": tools or [],
+            "tool_choice": "auto" if tools else None,
+        }).encode()
+
+        req = urllib.request.Request(
+            API_BASE + "/chat/completions",
+            data=body,
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {self.api_key}")
+        req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+
+        resp = urllib.request.urlopen(req, timeout=180)
+        return json.loads(resp.read().decode())
+
 
 def fetch_models(api_key: str = "") -> List[str]:
     req = urllib.request.Request(API_BASE + "/models")
@@ -67,6 +88,14 @@ def fetch_models(api_key: str = "") -> List[str]:
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = json.loads(resp.read().decode())
     return [m["id"] for m in data.get("data", [])]
+
+
+PROVIDER_DEFAULTS = {
+    "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+    "anthropic": {"base_url": "https://api.anthropic.com", "model": "claude-3-5-sonnet-20240620"},
+    "ollama": {"base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-1.5-pro"},
+}
 
 
 def get_provider(name: str, api_key: str, base_url: str, model: str):
@@ -83,11 +112,3 @@ def get_provider(name: str, api_key: str, base_url: str, model: str):
         from voxel.providers.gemini import GeminiProvider
         return GeminiProvider(api_key, base_url, model)
     return OpenCodeProvider(api_key, base_url, model)
-
-
-PROVIDER_DEFAULTS = {
-    "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
-    "anthropic": {"base_url": "https://api.anthropic.com", "model": "claude-3-5-sonnet-20240620"},
-    "ollama": {"base_url": "http://localhost:11434/v1", "model": "llama3.1"},
-    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-1.5-pro"},
-}

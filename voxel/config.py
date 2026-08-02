@@ -38,11 +38,11 @@ def default_config():
             "git_commit": "ask",
         },
         "agents": {
-            "code": {"model": "gpt-4o-mini"},
-            "plan": {"model": "gpt-4o-mini"},
-            "ask": {"model": "gpt-4o-mini"},
-            "debug": {"model": "gpt-4o-mini"},
-            "review": {"model": "gpt-4o-mini"},
+            "code": {"model": "deepseek-v4-flash-free"},
+            "plan": {"model": "deepseek-v4-flash-free"},
+            "ask": {"model": "deepseek-v4-flash-free"},
+            "debug": {"model": "deepseek-v4-flash-free"},
+            "review": {"model": "deepseek-v4-flash-free"},
         },
     }
 
@@ -68,8 +68,8 @@ def get_provider_config():
     return {
         "name": config.get("provider", "openai"),
         "api_key": config.get("api_key", ""),
-        "base_url": config.get("base_url", "https://api.openai.com/v1"),
-        "model": config.get("model", "gpt-4o-mini"),
+        "base_url": config.get("base_url", "https://opencode.ai/zen/v1"),
+        "model": config.get("model", "deepseek-v4-flash-free"),
         "mode": config.get("mode", "code"),
     }
 
@@ -102,3 +102,8 @@ def get_api_key(cfg):
 
 
 PROVIDER_DEFAULTS = {
+    "openai": {"base_url": "https://opencode.ai/zen/v1", "model": "deepseek-v4-flash-free"},
+    "anthropic": {"base_url": "https://api.anthropic.com", "model": "claude-3-5-sonnet-20240620"},
+    "ollama": {"base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-1.5-pro"},
+}
