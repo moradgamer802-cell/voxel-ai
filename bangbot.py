@@ -52,7 +52,9 @@ FREE_MODELS = [
     "nemotron-3-ultra-free",
 ]
 
-MAX_TOOL_ROUNDS = 8
+MAX_TOOL_ROUNDS = 5          # ek turn e max AI-round (8->5: thinking time half)
+MAX_TOOL_EXECS = 10          # ek turn e max tool execution (hard cap)
+TURN_TIME_BUDGET = 300       # ek turn max 5 min (thinking+tools) — loop e jome jabe na
 CMD_TIMEOUT = 120
 OUT_LIMIT = 3000
 
@@ -973,6 +975,7 @@ class UI:
         self._notice_t = 0.0
         self._mode_flash = 0.0
         self._approve_pop = 0.0
+        self._tool_progress = None  # v4.5: (name, arg, start_time) — tool exec animation
         self._popup_birth = 0.0
         self._route_fade = 0.0
         self.palette_filter = ""
@@ -1054,13 +1057,19 @@ class UI:
             threading.Thread(target=self.anim_loop, daemon=True).start()
 
     def anim_loop(self):
-        """v4 spinner + typewriter reveal while streaming (speed profile)."""
+        """v4 spinner + typewriter reveal while streaming; v4.5 tool-work progress bar."""
         tick = 0
         while not self.quitting:
-            if not self.streaming or self.plain:
+            if not (self.streaming or getattr(self, "_tool_progress", None)) or self.plain:
                 time.sleep(0.1)
                 continue
             tick += 1
+            if not self.streaming:
+                # v4.5: tool exec hoitache — box er niche ■/⬝ bar anim (main thread blocked)
+                if self.anim:
+                    self.redraw()
+                time.sleep(0.05)
+                continue
             acc = self._acc
             n = len(acc) - self._revealed
             if n > 0 and not self.anim:
@@ -1676,7 +1685,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.1 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.2 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -2551,6 +2560,8 @@ class UI:
     def run_turn(self):
         cmd_log = []
         self._last_tools = []
+        exec_count = 0
+        t_turn0 = time.time()
         for round_no in range(MAX_TOOL_ROUNDS):
             t0 = time.time()
             content, reasoning, err, used_model = self.stream_reply()
@@ -2591,14 +2602,13 @@ class UI:
                     self.messages[-1]["content"] += ("\n\n**Summary:**\n▸ Commands Executed (collapsed)\n"
                                                      + "\n".join(cmd_log))
                 self.status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
-            self._last_reply_dt = dt
-            spd = est_tokens(content) / max(0.1, time.time() - t0)
-            self._stream_speeds.append(spd)
-            if len(self._stream_speeds) > 10:
-                self._stream_speeds.pop(0)
                 self._last_reply_dt = dt
+                spd = est_tokens(content) / max(0.1, time.time() - t0)
+                self._stream_speeds.append(spd)
+                if len(self._stream_speeds) > 10:
+                    self._stream_speeds.pop(0)
                 self.redraw()
-                # v4: card entrance — reply grows in 8 frames x 30ms
+                # v4: card entrance — final reply grows in 8 frames x 30ms
                 if self.anim:
                     mi = len(self.messages) - 2
                     for f in range(1, 9):
@@ -2608,15 +2618,28 @@ class UI:
                     self._entrance = None
                     self.redraw()
                 break
+            # v4.5: turn time budget — AI stuck thakle turn jome jabe na
+            if time.time() - t_turn0 > TURN_TIME_BUDGET:
+                self.messages[-1]["content"] += "\n\n⛔ Turn time budget exceeded — loop stop (auto)"
+                self.notice("SYS", "Turn time budget exceeded — loop stop")
+                self.status = "loop-stopped"
+                self.redraw()
+                return
             results = []
             # v4: repeated-call guard — same tool+arg 3 bar mane AI loop e, stop
             if not hasattr(self, "_last_tools"):
                 self._last_tools = []
-            sig = [(n, a.get("path", "")) for n, a, _ in tools]
+            sig = []
+            for n, a, c in tools:
+                if n in ("run", "ls"):
+                    sig.append((n, (c or a.get("path", ""))[:60]))
+                else:
+                    sig.append((n, a.get("path", "")))
             self._last_tools.append(sig)
             if len(self._last_tools) > 4:
                 self._last_tools.pop(0)
             if len(self._last_tools) >= 3 and self._last_tools[-1] == self._last_tools[-2] == self._last_tools[-3]:
+                self.messages[-1]["content"] += "\n\n⛔ AI loop e feshe geche (same tool 3 bar) — break"
                 self.notes.append(C_RED + "⛔ AI loop e feshe geche (same tool 3 bar) — break" + C_RESET)
                 self.status = "loop-stopped"
                 self.redraw()
@@ -2634,10 +2657,21 @@ class UI:
                     arg = (tcontent or attrs.get("path") or "").strip()
                     tool_content = arg
                 note_idx = len(self.notes)
+                exec_count += 1
+                if exec_count > MAX_TOOL_EXECS:
+                    self.messages[-1]["content"] += "\n\n⛔ Tool call cap reached — loop stop (auto)"
+                    self.notice("SYS", f"Max {MAX_TOOL_EXECS} tool calls — loop stop")
+                    self.status = "loop-stopped"
+                    self.redraw()
+                    return
                 self.notes.append(C_YELLOW + "⚙ " + name + ": " + truncate(arg, 50) + C_RESET)
                 self.redraw()
                 t_tool = time.time()
-                res, diff_info = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs, auto_approve=self.auto_approve)
+                self._tool_progress = (name, arg, t_tool)
+                try:
+                    res, diff_info = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs, auto_approve=self.auto_approve)
+                finally:
+                    self._tool_progress = None
                 dur = time.time() - t_tool
                 results.append(f"[tool {name}: {res}]")
                 code_m = re.search(r"exit=(-?\d+)", res)
@@ -2659,6 +2693,13 @@ class UI:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
             results_txt = "\n".join(r for r in results if r.strip())
+            if results and all(("denied" in r or "nishedh" in r) for r in results):
+                # sob tool deny/skip — AI ar jiggesh korte thakbe na
+                self.messages[-1]["content"] += "\n\n⛔ Sob tool deny/skip hoyeche — loop stop"
+                self.notice("SYS", "Sob tool deny/skip — loop stop")
+                self.status = "loop-stopped"
+                self.redraw()
+                return
             if not results_txt.strip():
                 # v4: tool results khaali — empty user message append korbo na
                 self.notice("SYS", "Tool results khaali chilo — loop stop")
@@ -2714,7 +2755,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.1" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.2" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
