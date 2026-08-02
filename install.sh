@@ -27,8 +27,7 @@ pkg install -y python python-pip git termux-api > /dev/null 2>&1 || true
 
 # Install Python packages
 echo "[2/4] Installing Python packages..."
-pip install --upgrade pip --quiet 2>/dev/null || pip install --upgrade pip
-pip install click rich requests textual tiktoken --quiet 2>/dev/null || pip install click rich requests textual tiktoken
+pip install --break-system-packages click rich requests textual tiktoken --quiet 2>/dev/null || pip install click rich requests textual tiktoken
 
 # Create directories
 echo "[3/4] Setting up directories..."
