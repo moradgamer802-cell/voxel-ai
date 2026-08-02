@@ -1080,6 +1080,22 @@ class UI:
         pad = max(0, W - 6 - dlen(text))
         return "  " + color + "│" + C_RESET + C_PANEL + " " + text + " " * pad + C_RESET
 
+    def box_top(self, color, title, W):
+        title = short(title, 14)
+        X = max(0, W - 7 - dlen(title))
+        return "  " + color + "┌─ " + title + " " + "─" * X + "┐" + C_RESET
+
+    def box_row(self, color, text, W):
+        pad = max(0, W - 6 - dlen(text))
+        return "  " + color + "│" + C_RESET + " " + text + " " * pad + " " + color + "│" + C_RESET
+
+    def box_row_right(self, color, text, W):
+        pad = max(0, W - 5 - dlen(text))
+        return "  " + color + "│" + C_RESET + " " * pad + text + " " + color + "│" + C_RESET
+
+    def box_bottom(self, color, W):
+        return "  " + color + "└" + "─" * max(0, W - 4) + "┘" + C_RESET
+
     def card(self, color, text, W, top_gap=False, time_prefix=""):
         out = []
         if top_gap:
@@ -1267,51 +1283,66 @@ class UI:
         return "\n".join(lines)
 
     def assistant_block(self, model, text, W, think=None, reasoning="", time_prefix="", msg_idx=0):
-        """v4 AI reply: body bright (sole bright), sections dim-gray collapsed, meta footer."""
+        """v4.5 redesigned: tool work DIM outside (no box), reply body + sections INSIDE
+        purple VOXEL box, model tag bottom-right inside, 1 turn = 1 box."""
         tag_re = re.compile(r"<(run|write|read|search)[^>]*>\s*(.*?)\s*</\1>", re.S)
         def tag_line(m):
             name = m.group(1)
             cmd = short(m.group(2), 45)
             return f"→ {name}" + (f": {cmd}" if cmd else "")
         text2 = tag_re.sub(tag_line, text)
-        out = []
+        outside = []
+        inner = []
         sec_idx = 0
         sec_keys = []
         sections = self._parse_sections(text2)
-        first_body = True
         if think is not None:
             key = f"sec:{msg_idx}:think"
             sec_keys.append(key)
-            out += self.section_block(key, "Thought: " + fmt_thought(think), reasoning,
-                                      W, focused=(key == self.sec_focus), no_suffix=True)
+            outside.append("    " + C_MUTED + "▸ Thought: " + fmt_thought(think) + C_RESET)
+            if key in self.expand_diffs and reasoning.strip():
+                for ln in wrap_text(reasoning, max(20, W - 8)):
+                    outside.append("      " + C_MUTED + ln + C_RESET)
         for kind, title, content in sections:
             if kind == "body":
                 steps = [x for x in content.split("\n") if x.strip().startswith("→ ")]
                 body = [x for x in content.split("\n") if not x.strip().startswith("→ ")]
-                if steps:
-                    out += self.steps_block("\n".join(steps), W)
+                for s in steps:
+                    outside.append("    " + self._status_line(s.strip(), W))
                 if "".join(body).strip():
-                    tp = time_prefix if first_body else ""
-                    out += self.plain_block(model, "\n".join(body), W, time_prefix=tp, show_model=False)
-                first_body = False
+                    for ln in wrap_text("\n".join(body), max(20, W - 6)):
+                        inner.append(C_TEXT + ln + C_RESET)
             elif kind == "head":
-                out.append("    " + C_HIGHLIGHT + C_TEXT + title + ":" + C_RESET)
+                inner.append(C_HIGHLIGHT + C_TEXT + title + ":" + C_RESET)
                 if content.strip():
-                    out += self.plain_block(model, content, W, show_model=False)
+                    for ln in wrap_text(content, max(20, W - 6)):
+                        inner.append(C_TEXT + ln + C_RESET)
             elif kind == "sec":
                 key = f"sec:{msg_idx}:{sec_idx}"
                 sec_idx += 1
                 sec_keys.append(key)
-                out += self.section_block(key, title or "Details", content, W,
-                                          focused=(key == self.sec_focus))
+                inner += self.section_block(key, title or "Details", content, W,
+                                            focused=(key == self.sec_focus))
             elif kind == "meta":
-                out.append("    " + C_MUTED + content + C_RESET)
-        out.append("    " + C_MUTED + model + C_RESET)
+                inner.append(C_MUTED + content + C_RESET)
+        if not inner:
+            self._sec_keys = sec_keys
+            return outside
+        box = [self.box_top(C_ACC, "VOXEL", W)]
+        if time_prefix:
+            box.append(self.box_row(C_ACC, C_DIM + time_prefix + C_RESET, W))
+            box.append(self.box_row(C_ACC, "", W))
+        for ln in inner:
+            box.append(self.box_row(C_ACC, ln, W))
+        box.append(self.box_row(C_ACC, "", W))
+        tag = C_DIM + "-".join(model.split("-")[:2]) + C_RESET
+        box.append(self.box_row_right(C_ACC, tag, W))
+        box.append(self.box_bottom(C_ACC, W))
         self._sec_keys = sec_keys
-        return out
+        return outside + box
 
     def section_block(self, key, title, content, W, focused=False, no_suffix=False):
-        """v4 collapsible dim section: '▸ Title (collapsed)' gray, Enter/focus expand."""
+        """v4.5 collapsible dim section — lines rendered INSIDE the VOXEL box."""
         out = []
         expanded = key in self.expand_diffs
         c_lines = [l for l in content.split("\n") if l.strip() not in ("```", "```bash", "```text")]
@@ -1321,19 +1352,19 @@ class UI:
             header = C_MUTED + "▾ " + title + C_RESET
             if focused:
                 header += "  " + C_MUTED + "◄──" + C_RESET
-            out.append("    " + header)
+            out.append(header)
             w_lines = wrap_text(c_text, max(20, W - 8))
             # v4: line-by-line expand/collapse anim slice
             if self._sec_anim and self._sec_anim[0] == key:
                 w_lines = w_lines[:max(1, int(len(w_lines) * self._sec_anim[1]))]
             for ln in w_lines:
-                out.append("      " + self._status_line(ln, W))
+                out.append(self._status_line(ln, W))
         else:
             if focused:
-                out.append("    " + C_ACC + "▸ " + C_RESET + C_MUTED + title + suffix + C_RESET
+                out.append(C_ACC + "▸ " + C_RESET + C_MUTED + title + suffix + C_RESET
                            + "  " + C_MUTED + "◄──" + C_RESET)
             else:
-                out.append("    " + C_MUTED + "▸ " + title + suffix + C_RESET)
+                out.append(C_MUTED + "▸ " + title + suffix + C_RESET)
         return out
 
     def _status_line(self, ln, W):
@@ -1602,7 +1633,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.4 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.0 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1681,13 +1712,18 @@ class UI:
                 # v4: tool results hidden — Commands Executed section e fold
                 continue
             if role == "user":
-                # v4: user card transparent — no bg panel, bright text + ❯
+                # v4.5: green YOU box — time inside, ❯ bold, 1 blank row after
                 ulines = wrap_text(text, max(20, W - 6))
+                body.append(self.box_top(C_USER, "YOU", W))
+                if time_str:
+                    body.append(self.box_row(C_USER, C_DIM + time_str + C_RESET, W))
                 for i, ln in enumerate(ulines):
                     if i == 0:
-                        body.append("  " + C_DIM + time_str + " " + C_USER + "❯ " + C_RESET + C_TEXT + ln + C_RESET)
+                        body.append(self.box_row(C_USER, C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET, W))
                     else:
-                        body.append("    " + C_TEXT + ln + C_RESET)
+                        body.append(self.box_row(C_USER, C_TEXT + ln + C_RESET, W))
+                body.append(self.box_bottom(C_USER, W))
+                body.append("")
             else:
                 alines = self.assistant_block(msg.get("model") or self.model, text, W,
                                               think=msg.get("think"), reasoning=msg.get("reasoning", ""),
@@ -1696,6 +1732,7 @@ class UI:
                 if self._entrance and self._entrance[0] == mi:
                     alines = alines[:max(1, int(len(alines) * self._entrance[1]))]
                 body += alines
+                body.append("")
         if self.timing_panel:
             # v4: central timing table
             hist = self._render_hist[-10:]
@@ -2632,7 +2669,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.4" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.0" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
