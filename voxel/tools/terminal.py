@@ -1,4 +1,4 @@
-"""Terminal execution tool for VOXEL."""
+"""Terminal execution tool for MRNOT."""
 
 import subprocess
 import os

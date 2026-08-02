@@ -1,4 +1,4 @@
-"""LSP integration tools for VOXEL."""
+"""LSP integration tools for MRNOT."""
 
 import json
 import subprocess

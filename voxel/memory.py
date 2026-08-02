@@ -1,4 +1,4 @@
-"""Memory bank for VOXEL."""
+"""Memory bank for MRNOT."""
 
 from pathlib import Path
 from typing import Optional
@@ -32,7 +32,7 @@ def init_memory(project_description: str = "") -> str:
         with open(path, "r") as f:
             return f.read()
 
-    content = f"""# VOXEL Memory Bank
+    content = f"""# MRNOT Memory Bank
 
 ## Project Description
 {project_description or "No description yet."}

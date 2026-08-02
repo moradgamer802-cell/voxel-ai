@@ -1,4 +1,4 @@
-"""Tool registry for VOXEL."""
+"""Tool registry for MRNOT."""
 
 from typing import Callable, Dict, List
 

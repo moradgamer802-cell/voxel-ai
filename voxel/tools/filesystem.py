@@ -1,4 +1,4 @@
-"""File system tools for VOXEL."""
+"""File system tools for MRNOT."""
 
 import os
 import fnmatch

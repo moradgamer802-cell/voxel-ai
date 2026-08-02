@@ -1,1 +1,1 @@
-"""UI package for VOXEL."""
+"""UI package for MRNOT."""

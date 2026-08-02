@@ -1,4 +1,4 @@
-"""Git integration tools for VOXEL."""
+"""Git integration tools for MRNOT."""
 
 from .terminal import run_command_safe
 

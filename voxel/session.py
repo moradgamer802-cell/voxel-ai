@@ -1,4 +1,4 @@
-"""Session management for VOXEL."""
+"""Session management for MRNOT."""
 
 import json
 import uuid

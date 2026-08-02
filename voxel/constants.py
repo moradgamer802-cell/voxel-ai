@@ -1,10 +1,10 @@
-"""Shared constants for VOXEL."""
+"""Shared constants for MRNOT."""
 
 import os
 import re
 
 # Paths
-CONFIG_DIR = os.path.expanduser("~/.config/voxel")
+CONFIG_DIR = os.path.expanduser("~/.config/mrnot")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 CHATS_DIR = os.path.join(CONFIG_DIR, "chats")
 
@@ -65,7 +65,7 @@ PALETTE_CMDS = ["/help", "/new", "/models", "/sessions", "/save", "/load", "/rm"
 COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/undo", "/save ", "/load ", "/sessions",
                 "/rm ", "/stats", "/perm", "/exit"]
 
-SYSTEM_PROMPT = """Tumi VOXEL AI - ekta AI agent CLI, cholte ache Termux (Android terminal) e.
+SYSTEM_PROMPT = """Tumi MRNOT AI - ekta AI agent CLI, cholte ache Termux (Android terminal) e.
 Bangla o English dui language e reply koro. User Banglish e likhle tumi o Banglish e reply diba.
 Answer chhoto, clear ar to-the-point hobe. Code thakle ``` block e diba.
 
@@ -97,7 +97,7 @@ When user mentions: storage, sdcard, internal memory, files, folders, photos, do
 - Ekbare ekta tag use koro, result ashle tarpor aro kaj lagle abar tag use korbe.
 - command chalano te warning/error thakle seta user ke bolo.
 - 'termux-*' command available ache (termux-api installed thakle).
-- Reply e nijer nam/shurur greeting (jemon "VOXEL AI bhalo achi", "ki kore help korte pari") force koro na — direct user er proshner jawab dao."""
+- Reply e nijer nam/shurur greeting (jemon "MRNOT AI bhalo achi", "ki kore help korte pari") force koro na — direct user er proshner jawab dao."""
 
 PLAN_PROMPT = """EKHTAR PLAN MODE E ACHO! Ei mode e tumi SHUDHU analyze/plan korba:
 - KONO <write> tool use korbe NA — kono file create/modify korbe na.

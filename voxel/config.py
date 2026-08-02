@@ -1,15 +1,15 @@
-"""Configuration management for VOXEL."""
+"""Configuration management for MRNOT."""
 
 import json
 import os
 from pathlib import Path
 
-CONFIG_DIR = Path.home() / ".config" / "voxel"
+CONFIG_DIR = Path.home() / ".config" / "mrnot"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 CHATS_DIR = CONFIG_DIR / "chats"
 COMMANDS_DIR = CONFIG_DIR / "commands"
-PROJECT_COMMANDS_DIR = Path.cwd() / ".voxel" / "commands"
-MEMORY_FILE = Path.cwd() / ".voxel" / "memory.md"
+PROJECT_COMMANDS_DIR = Path.cwd() / ".mrnot" / "commands"
+MEMORY_FILE = Path.cwd() / ".mrnot" / "memory.md"
 
 
 def ensure_dirs():

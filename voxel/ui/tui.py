@@ -1,4 +1,4 @@
-"""Textual TUI for VOXEL."""
+"""Textual TUI for MRNOT."""
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -265,7 +265,7 @@ class VoxelTUI(App):
 
         try:
             response = self.agent.run(text, auto_approve=self.auto_approve)
-            messages.write(Panel(Markdown(response), title="[bold cyan]VOXEL[/bold cyan]", border_style="cyan"))
+            messages.write(Panel(Markdown(response), title="[bold cyan]MRNOT[/bold cyan]", border_style="cyan"))
             append_message(self.session_id, "assistant", response)
         except Exception as e:
             messages.write(f"[red]Error: {e}[/red]")
@@ -427,7 +427,7 @@ class VoxelTUI(App):
                     if m["role"] == "user":
                         self.query_one("#messages", RichLog).write(Panel(Text(m["content"], style="bold green"), title="[bold green]You[/bold green]", border_style="green"))
                     elif m["role"] == "assistant":
-                        self.query_one("#messages", RichLog).write(Panel(Markdown(m["content"]), title="[bold cyan]VOXEL[/bold cyan]", border_style="cyan"))
+                        self.query_one("#messages", RichLog).write(Panel(Markdown(m["content"]), title="[bold cyan]MRNOT[/bold cyan]", border_style="cyan"))
                 self.update_status()
                 self.update_sessions()
 

@@ -1,4 +1,4 @@
-"""Auto-compact for VOXEL sessions."""
+"""Auto-compact for MRNOT sessions."""
 
 import tiktoken
 from typing import List

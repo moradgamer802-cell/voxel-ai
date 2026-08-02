@@ -1,4 +1,4 @@
-"""Permission system for VOXEL."""
+"""Permission system for MRNOT."""
 
 from typing import Tuple
 from voxel.config import load_config

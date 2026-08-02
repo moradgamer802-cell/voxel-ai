@@ -1,4 +1,4 @@
-"""Plain (non-TUI) fallback UI for VOXEL."""
+"""Plain (non-TUI) fallback UI for MRNOT."""
 
 from voxel.constants import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_RESET
 import time

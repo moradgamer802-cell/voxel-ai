@@ -1,7 +1,7 @@
-"""CLI entry point for VOXEL."""
+"""CLI entry point for MRNOT."""
 
 import sys
-import os
+import click
 
 from voxel.config import load_config, get_provider_config, set_provider_config, PROVIDER_DEFAULTS
 from voxel.ui.term import TermUI
@@ -16,7 +16,7 @@ from voxel.providers import get_provider
 @click.group()
 @click.version_option()
 def cli():
-    """VOXEL - AI Coding Assistant for Termux. Built like OpenCode / Kilo Code."""
+    """MRNOT - AI Coding Assistant for Termux. Built like OpenCode / Kilo Code."""
     pass
 
 
@@ -27,7 +27,7 @@ def cli():
 @click.option("--model", "-m", help="Model name")
 @click.option("--mode", type=click.Choice(["code", "plan", "ask", "debug", "review"]), help="Default agent mode")
 def setup(provider, api_key, base_url, model, mode):
-    """Configure VOXEL with your AI provider."""
+    """Configure MRNOT with your AI provider."""
     config = load_config()
 
     provider = provider or config.get("provider", "openai")
@@ -58,7 +58,7 @@ def setup(provider, api_key, base_url, model, mode):
 @click.option("--continue", "-c", "continue_session", is_flag=True, help="Continue last session")
 @click.option("--cwd", help="Working directory")
 def run(prompt, auto, mode, model, output_format, quiet, continue_session, cwd):
-    """Run VOXEL with a prompt (non-interactive)."""
+    """Run MRNOT with a prompt (non-interactive)."""
     config = get_provider_config()
     provider_name = config.get("name", "openai")
     api_key = config.get("api_key", "")
@@ -72,7 +72,7 @@ def run(prompt, auto, mode, model, output_format, quiet, continue_session, cwd):
         current_mode = mode
 
     if not api_key and provider_name != "ollama":
-        click.echo("Error: No API key configured. Run: voxel setup", err=True)
+        click.echo("Error: No API key configured. Run: mrnot setup", err=True)
         sys.exit(1)
 
     provider = get_provider(provider_name, api_key, base_url, current_model)
@@ -113,12 +113,11 @@ def chat(mode, model, cwd, continue_session):
         current_mode = mode
 
     if not api_key and provider_name != "ollama":
-        click.echo("Error: No API key configured. Run: voxel setup", err=True)
+        click.echo("Error: No API key configured. Run: mrnot setup", err=True)
         sys.exit(1)
 
     provider = get_provider(provider_name, api_key, base_url, current_model)
     agent = Agent(provider, current_mode)
-
     ui = TermUI(config, api_key, current_model)
 
     if continue_session:
@@ -147,10 +146,10 @@ def read(path):
     click.echo(content)
 
 
-@cli.command()
+@cli.command(name="run_cmd")
 @click.argument("command", required=True)
 @click.option("--timeout", "-t", default=30, help="Timeout in seconds")
-def exec_cmd(command, timeout):
+def run_cmd(command, timeout):
     """Run a shell command."""
     from voxel.tools.terminal import run_command_safe
     result = run_command_safe(command, timeout=timeout)
@@ -186,7 +185,7 @@ def memory(description):
         if memory:
             click.echo(memory)
         else:
-            click.echo("No memory bank found. Use: voxel memory 'project description'")
+            click.echo("No memory bank found. Use: mrnot memory 'project description'")
 
 
 @cli.command()
@@ -233,7 +232,7 @@ def edit(path):
     if path:
         click.edit(filename=path, editor=editor)
     else:
-        click.echo("Usage: voxel edit <file>")
+        click.echo("Usage: mrnot edit <file>")
 
 
 def main():

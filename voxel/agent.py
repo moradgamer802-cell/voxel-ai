@@ -1,4 +1,4 @@
-"""Agent loop for VOXEL."""
+"""Agent loop for MRNOT."""
 
 import json
 from typing import List, Dict, Any, Optional
@@ -29,7 +29,7 @@ class Agent:
 
         system_parts = [
             mode_prompt,
-            "You are VOXEL, an AI coding assistant running in the terminal.",
+            "You are MRNOT, an AI coding assistant running in the terminal.",
             "You have access to tools to read files, write files, search code, run commands, and use git.",
             "When you need to use a tool, respond with a JSON object in this format:",
             '{"tool": "tool_name", "args": {"param": "value"}, "thought": "why you are using this tool"}',
@@ -153,3 +153,28 @@ class Agent:
             return
         from voxel.compact import compact_session
         compact_session(self.messages)
+
+    def send(self, text: str, ui=None) -> str:
+        result = self.run(text, auto_approve=getattr(ui, 'auto_approve', False))
+        if ui:
+            ui.messages = [{"role": m.role, "content": m.content} for m in self.messages]
+        return result
+
+    def _undo(self):
+        if len(self.messages) > 2:
+            self.messages = self.messages[:-2]
+            return "Undo: removed last exchange"
+        return "Nothing to undo"
+
+    def _run_command(self, cmd: str) -> str:
+        if cmd == "/new":
+            self.messages = [self.messages[0]]
+            return "New session started"
+        if cmd == "/clear":
+            self.messages = [self.messages[0]]
+            return "Context cleared"
+        if cmd == "/compact":
+            from voxel.compact import compact_session
+            compact_session(self.messages)
+            return "Session compacted"
+        return f"Command: {cmd}"
