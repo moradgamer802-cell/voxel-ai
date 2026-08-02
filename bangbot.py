@@ -52,7 +52,7 @@ FREE_MODELS = [
     "nemotron-3-ultra-free",
 ]
 
-MAX_TOOL_ROUNDS = 5          # ek turn e max AI-round (8->5: thinking time half)
+MAX_TOOL_ROUNDS = 8          # ek turn e max AI-round
 MAX_TOOL_EXECS = 10          # ek turn e max tool execution (hard cap)
 TURN_TIME_BUDGET = 300       # ek turn max 5 min (thinking+tools) — loop e jome jabe na
 CMD_TIMEOUT = 120
@@ -2741,7 +2741,7 @@ class UI:
                 return
             self.messages.append({"role": "user", "content": results_txt, "time": time.time()})
         else:
-            self.notice("SYS", "Max tool rounds — /new diye fresh koro.")
+            self.notice("SYS", "Max tool rounds reached — continuing next turn.")
         if self.loaded_name and len(self.messages) > 1:
             save_session(self.loaded_name, self.messages)
 

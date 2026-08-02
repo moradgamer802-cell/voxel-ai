@@ -83,10 +83,8 @@ class Agent:
                     allowed, reason = check_permission(tool_name, auto_approve=auto_approve)
                     if not allowed:
                         result = f"Permission denied: {reason}"
-                        self._append_assistant(f"⚠ {result}\n")
                     else:
                         result = execute_tool(tool_name, tool_args)
-                        self._append_assistant(f"🔧 {tool_name}: {result[:500]}\n")
 
                     tool_results.append({
                         "tool": tool_name,
