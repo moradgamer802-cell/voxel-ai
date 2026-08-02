@@ -911,6 +911,7 @@ class UI:
         self._anim_hdr = None
         self._anim_t0 = 0.0
         self._hdr_override = None
+        self.sec_focus = None
 
     def anim_header(self, new_title, W):
         """v4 session-switch header animation — typewriter reveal, 7 frames x 40ms."""
@@ -1084,55 +1085,81 @@ class UI:
         return False
 
     def _parse_sections(self, text):
-        """Parse reply into [(kind, title, content)].
-        kind: 'text' visible | 'sec' collapsible | 'head' bold header (Final Reply/Result/Location)."""
-        sections = []
-        cur_kind = "text"
+        """v4 reply structure -> [(kind, title, content)].
+        kind: 'body' bright normal | 'head' bold header | 'sec' collapsible dim | 'meta' dim footer."""
+        chunks = []
+        cur_kind = "body"
         cur_title = None
         cur = []
-        head_re = re.compile(r"^\*\*(.+?)\*\*\s*:?\s*$")
-        for raw in text.split("\n"):
-            line = raw.rstrip()
-            s = line.strip()
+        head_re = re.compile(r"^\*\*(.+?)\*\*:?\s*(.*)$")
+
+        def push():
+            content = "\n".join(cur).strip("\n")
+            if content or cur_kind == "body":
+                chunks.append((cur_kind, cur_title, content))
+
+        i, n = 0, len(text.split("\n"))
+        lines = text.split("\n")
+        while i < n:
+            raw = lines[i]
+            s = raw.strip()
             if s.startswith("**Summary:**"):
-                if cur or cur_title:
-                    sections.append((cur_kind, cur_title, "\n".join(cur)))
+                push()
                 cur_kind = "sec"
                 cur_title = None
                 cur = []
+                i += 1
                 continue
-            if cur_kind == "sec" and cur_title is None:
-                t = s.lstrip("▸").strip()
-                t = re.sub(r"\s*\(collapsed\)\s*$", "", t)
-                if t:
-                    cur_title = t
-                    continue
-                cur.append(raw)
-                continue
-            m = head_re.match(s)
-            if m:
-                if cur or cur_title:
-                    sections.append((cur_kind, cur_title, "\n".join(cur)))
-                cur_kind = "head"
-                cur_title = m.group(1)
+            m = re.match(r"^▸\s+(.+?)\s*$", s)
+            if m and cur_kind == "sec":
+                title = re.sub(r"\s*\(collapsed\)\s*$", "", m.group(1).strip())
+                push()
+                cur_title = title
                 cur = []
+                i += 1
                 continue
-            mi = re.match(r"^\*\*(.+?)\*\*\s*:?\s*(.*)$", s)
-            if mi and not s.startswith("**Summary:**"):
-                if cur or cur_title:
-                    sections.append((cur_kind, cur_title, "\n".join(cur)))
-                sections.append(("head", mi.group(1), mi.group(2)))
-                cur_kind = "text"
+            mh = head_re.match(s)
+            if mh and not s.startswith("**Summary:**"):
+                push()
+                chunks.append(("head", mh.group(1).strip().rstrip(":"), mh.group(2)))
+                cur_kind = "body"
                 cur_title = None
                 cur = []
+                i += 1
                 continue
             cur.append(raw)
-        if cur or cur_title:
-            sections.append((cur_kind, cur_title, "\n".join(cur)))
-        return sections
+            i += 1
+        push()
+        out = []
+        for kind, title, content in chunks:
+            if kind in ("body", "head") and content:
+                keep, metas = [], []
+                for ln in content.split("\n"):
+                    if re.match(r"^\s*Location:\s*\S", ln):
+                        metas.append(ln.strip())
+                    else:
+                        keep.append(ln)
+                if "".join(keep).strip():
+                    out.append((kind, title, "\n".join(keep)))
+                for ml in metas:
+                    out.append(("meta", None, ml))
+            else:
+                out.append((kind, title, content))
+        return out
 
-    def assistant_block(self, model, text, W, think=None, time_prefix="", msg_idx=0):
-        """AI reply: visible text normal, **Summary:** sections collapsed+dim (Enter expand)."""
+    def _body_only(self, pend):
+        """Streaming: body part only (sections + tool lines hidden until done)."""
+        cut = pend.split("**Summary:**", 1)[0]
+        lines = []
+        for l in cut.split("\n"):
+            if l.strip().startswith("→ ") or re.search(r"<(run|write|read|search)>", l):
+                continue
+            l = re.sub(r"\*\*(.+?)\*\*\s*:?\s*(.*)", lambda m: m.group(1) + ": " + m.group(2), l)
+            lines.append(l)
+        return "\n".join(lines)
+
+    def assistant_block(self, model, text, W, think=None, reasoning="", time_prefix="", msg_idx=0):
+        """v4 AI reply: body bright (sole bright), sections dim-gray collapsed, meta footer."""
         tag_re = re.compile(r"<(run|write|read|search)[^>]*>\s*(.*?)\s*</\1>", re.S)
         def tag_line(m):
             name = m.group(1)
@@ -1140,64 +1167,94 @@ class UI:
             return f"→ {name}" + (f": {cmd}" if cmd else "")
         text2 = tag_re.sub(tag_line, text)
         out = []
-        if think is not None:
-            out += self.section_block(f"sec:{msg_idx}:think", "Thought: " + fmt_thought(think), "", W)
         sec_idx = 0
+        sec_keys = []
         sections = self._parse_sections(text2)
+        first_body = True
+        if think is not None:
+            key = f"sec:{msg_idx}:think"
+            sec_keys.append(key)
+            out += self.section_block(key, "Thought: " + fmt_thought(think), reasoning,
+                                      W, focused=(key == self.sec_focus), no_suffix=True)
         for kind, title, content in sections:
-            if kind == "text":
+            if kind == "body":
                 steps = [x for x in content.split("\n") if x.strip().startswith("→ ")]
                 body = [x for x in content.split("\n") if not x.strip().startswith("→ ")]
                 if steps:
                     out += self.steps_block("\n".join(steps), W)
                 if "".join(body).strip():
-                    out += self.plain_block(model, "\n".join(body), W, time_prefix=time_prefix, show_model=False)
+                    tp = time_prefix if first_body else ""
+                    out += self.plain_block(model, "\n".join(body), W, time_prefix=tp, show_model=False)
+                first_body = False
+            elif kind == "head":
+                out.append("    " + C_HIGHLIGHT + C_TEXT + title + ":" + C_RESET)
+                if content.strip():
+                    out += self.plain_block(model, content, W, show_model=False)
             elif kind == "sec":
                 key = f"sec:{msg_idx}:{sec_idx}"
                 sec_idx += 1
-                out += self.section_block(key, title or "Details", content, W)
-            else:
-                title2 = (title or "").rstrip(":")
-                suffix = "" if re.match(r"^\d{1,2}:\d{2}$", title2) else ":"
-                if title2:
-                    out.append("    " + C_BOLD + C_TEXT + title2 + suffix + C_RESET)
-                if content.strip():
-                    out += self.plain_block(model, content, W, show_model=False)
+                sec_keys.append(key)
+                out += self.section_block(key, title or "Details", content, W,
+                                          focused=(key == self.sec_focus))
+            elif kind == "meta":
+                out.append("    " + C_MUTED + content + C_RESET)
         out.append("    " + C_MUTED + model + C_RESET)
+        self._sec_keys = sec_keys
         return out
 
-    def section_block(self, key, title, content, W):
-        """Collapsible dim section: '▸ Title (collapsed)' -> Enter expand."""
+    def section_block(self, key, title, content, W, focused=False, no_suffix=False):
+        """v4 collapsible dim section: '▸ Title (collapsed)' gray, Enter/focus expand."""
         out = []
         expanded = key in self.expand_diffs
         c_lines = [l for l in content.split("\n") if l.strip() not in ("```", "```bash", "```text")]
         c_text = "\n".join(c_lines)
+        suffix = "" if no_suffix else " (collapsed)"
         if expanded:
-            out.append("    " + C_ACC + "▾ " + C_RESET + C_MUTED + title + C_RESET)
+            header = C_MUTED + "▾ " + title + C_RESET
+            if focused:
+                header += "  " + C_MUTED + "◄──" + C_RESET
+            out.append("    " + header)
             for ln in wrap_text(c_text, max(20, W - 8)):
-                out.append("      " + C_DIM + ln + C_RESET)
+                out.append("      " + self._status_line(ln, W))
         else:
-            out.append("    " + C_ACC + "▸ " + C_RESET + C_MUTED + title + C_RESET
-                       + C_DIM + " (collapsed)" + C_RESET)
+            if focused:
+                out.append("    " + C_ACC + "▸ " + C_RESET + C_MUTED + title + suffix + C_RESET
+                           + "  " + C_MUTED + "◄──" + C_RESET)
+            else:
+                out.append("    " + C_MUTED + "▸ " + title + suffix + C_RESET)
         return out
 
+    def _status_line(self, ln, W):
+        """→ run: cmd ✓ 0.3s — status icon colored (✓ green / ✗ red), baki gray."""
+        m = re.search(r"\s(✓|✗)(?:\s+(.+))?$", ln)
+        if not m:
+            return C_MUTED + ln + C_RESET
+        rest = ln[:m.start()].rstrip()
+        icon = m.group(1)
+        extra = (m.group(2) or "").strip()
+        base = C_MUTED + rest + " " + (C_GOOD if icon == "✓" else C_ERRC) + icon + C_RESET
+        if extra:
+            base += " " + C_MUTED + extra + C_RESET
+        return base
+
     def plain_block(self, model, text, W, think=None, time_prefix="", show_model=True):
+        """Main reply body — BRIGHT white (sole bright element, v4 spec)."""
         out = []
         if think is not None:
             out.append("    " + C_MUTED + "+ Thought: " + fmt_thought(think) + C_RESET)
         lines = wrap_text(text, max(20, W - 6))
         for i, ln in enumerate(lines):
             if i == 0 and time_prefix:
-                display = "    " + C_DIM + time_prefix + C_RESET + " " + ln
+                display = "    " + C_MUTED + time_prefix + C_RESET + " " + C_TEXT + ln + C_RESET
             else:
-                display = "    " + ln
+                display = "    " + C_TEXT + ln + C_RESET
             out.append(display)
         if show_model:
             out.append("    " + C_MUTED + model + C_RESET)
         return out
 
     def steps_block(self, text, W):
-        """Compact opencode-style tool/step lines (→ ... / + Thought ...)."""
+        """Compact dim tool/step lines (→ ...) — v4: gray 245."""
         out = []
         for ln in text.split("\n"):
             s = ln.strip()
@@ -1394,7 +1451,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.0 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.1 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1482,40 +1539,30 @@ class UI:
             ts = msg.get("time")
             time_str = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
             if text.startswith("[tool "):
-                m = re.search(r"\[tool (\w+):", text)
-                tname = m.group(1) if m else "tool"
-                inner = text.split(": ", 1)[1].strip() if ": " in text else ""
-                res_m = re.search(r"exit=(-?\d+)", inner)
-                ok = not res_m or res_m.group(1) == "0"
-                icon = "✓" if ok else "✗"
-                summ = inner.split("] ", 1)[1] if "] " in inner else ""
-                summ = summ.split("[/Tool", 1)[0].strip()
-                summ = " ".join(summ.split())[:40]
-                body.append("    " + (C_GREEN if ok else C_ERRC) + f"{icon} {tname}" + C_MUTED + (f" — {summ}" if summ else "") + C_RESET)
+                # v4: tool results hidden — Commands Executed section e fold
                 continue
             if role == "user":
                 body += self.card(C_USER, text, W, time_prefix=time_str)
             else:
-                body += self.assistant_block(msg.get("model") or self.model, text, W, think=msg.get("think"), time_prefix=time_str, msg_idx=mi + 1)
+                body += self.assistant_block(msg.get("model") or self.model, text, W,
+                                             think=msg.get("think"), reasoning=msg.get("reasoning", ""),
+                                             time_prefix=time_str, msg_idx=mi + 1)
         if self.streaming:
             elapsed = time.time() - self._stream_start
             speed = self._stream_tokens / elapsed if elapsed > 0 and self._stream_tokens > 0 else 0
             if self.pending:
-                pend = self.pending
-                if "**Summary:**" in pend or "**Final" in pend or "**Result" in pend or "**Location" in pend:
-                    pend_lines = self.assistant_block(self.model, pend, W, msg_idx=999)
-                    body.extend(pend_lines)
-                    if speed > 0:
-                        body.append("    " + C_DIM + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
-                else:
-                    plines = wrap_text(self.pending, max(20, W - 6))
+                body_only = self._body_only(self.pending)
+                plines = wrap_text(body_only, max(20, W - 6))
+                if plines:
+                    while plines and plines[-1] == "":
+                        plines.pop()
                     for i, ln in enumerate(plines):
                         if i == len(plines) - 1:
-                            body.append("    " + ln + C_DIM + "▍" + C_RESET)
+                            body.append("    " + C_TEXT + ln + C_RESET + C_ACC + "▍" + C_RESET)
                         else:
-                            body.append("    " + ln)
-                    if speed > 0:
-                        body.append("    " + C_DIM + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
+                            body.append("    " + C_TEXT + ln + C_RESET)
+                if speed > 0:
+                    body.append("    " + C_MUTED + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
             else:
                 body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
         for label, text in self.notices:
@@ -1783,6 +1830,12 @@ class UI:
                 self.hidx = len(self.hist)
                 self.buf = ""
                 self.send(text)
+            elif self.sec_focus:
+                if self.sec_focus in self.expand_diffs:
+                    self.expand_diffs.discard(self.sec_focus)
+                else:
+                    self.expand_diffs.add(self.sec_focus)
+                self.redraw()
             elif self.toggle_diff_expand():
                 self.redraw()
             else:
@@ -1812,6 +1865,14 @@ class UI:
                 self.buf = ""
                 self.redraw()
                 return
+            # v4: ESC = collapse all sections (first), home (second)
+            sec_keys = [k2 for k2 in self.expand_diffs if k2.startswith("sec:")]
+            if sec_keys:
+                for k2 in sec_keys:
+                    self.expand_diffs.discard(k2)
+                self.sec_focus = None
+                self.redraw()
+                return
             if len(self.messages) > 1:
                 save_session("last", self.messages)
             self.buf = ""
@@ -1828,6 +1889,14 @@ class UI:
         elif k == "TAB":
             if self.buf.startswith("/"):
                 self.complete()
+            elif self._sec_keys:
+                # v4: Tab = jump between sections (focus indicator)
+                if self.sec_focus is None or self.sec_focus not in self._sec_keys:
+                    self.sec_focus = self._sec_keys[0]
+                else:
+                    idx = self._sec_keys.index(self.sec_focus)
+                    self.sec_focus = self._sec_keys[(idx + 1) % len(self._sec_keys)]
+                self.redraw()
             else:
                 self.toggle_mode()
         elif k == "UP":
@@ -2170,6 +2239,7 @@ class UI:
         return content, reasoning, None, used_model
 
     def run_turn(self):
+        cmd_log = []
         for round_no in range(MAX_TOOL_ROUNDS):
             t0 = time.time()
             content, reasoning, err, used_model = self.stream_reply()
@@ -2193,7 +2263,12 @@ class UI:
             self.messages.append({"role": "assistant", "content": content, "time": time.time(), "model": used_model})
             if getattr(self, "_think_secs", None) is not None:
                 self.messages[-1]["think"] = self._think_secs
+            if reasoning.strip():
+                self.messages[-1]["reasoning"] = reasoning
             if not tools:
+                if cmd_log:
+                    self.messages[-1]["content"] += ("\n\n**Summary:**\n▸ Commands Executed (collapsed)\n"
+                                                     + "\n".join(cmd_log))
                 self.status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
                 self.redraw()
                 break
@@ -2213,7 +2288,9 @@ class UI:
                 note_idx = len(self.notes)
                 self.notes.append(C_YELLOW + "⚙ " + name + ": " + truncate(arg, 50) + C_RESET)
                 self.redraw()
+                t_tool = time.time()
                 res, diff_info = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs, auto_approve=self.auto_approve)
+                dur = time.time() - t_tool
                 results.append(f"[tool {name}: {res}]")
                 code_m = re.search(r"exit=(-?\d+)", res)
                 ok = not code_m or code_m.group(1) == "0"
@@ -2226,6 +2303,8 @@ class UI:
                                             + (" — " + first_line if first_line else "") + C_RESET)
                 if diff_info:
                     self.notes[note_idx] = diff_info
+                icon = "✓" if ok else "✗"
+                cmd_log.append(f"→ {name}: {short(arg, 40)} {icon} {fmt_duration(dur)}")
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
@@ -2277,7 +2356,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.0" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.1" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
