@@ -1602,7 +1602,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.2 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.3 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1726,16 +1726,6 @@ class UI:
                             body.append("    " + C_TEXT + ln + C_RESET)
                 if speed > 0:
                     body.append("    " + C_MUTED + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
-            elif not self._acc and not self.pending:
-                # v4: loading screen — model thinking, ekhono kono content asheni
-                box_w = min(34, W - 10)
-                pad1 = max(1, (W - box_w) // 2)
-                body.append("")
-                body.append(" " * pad1 + C_ACC + "┌" + "─" * (box_w - 2) + "┐" + C_RESET)
-                ttl = self.spin + " Thinking…"
-                body.append(" " * pad1 + C_ACC + "│" + C_RESET + C_MUTED + ttl.ljust(box_w - 2) + C_ACC + "│" + C_RESET)
-                body.append(" " * pad1 + C_ACC + "└" + "─" * (box_w - 2) + "┘" + C_RESET)
-                body.append(" " * pad1 + C_MUTED + "model: " + self.model + C_RESET)
             else:
                 body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
         for label, text in self.notices:
@@ -2629,7 +2619,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.2" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.3" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
