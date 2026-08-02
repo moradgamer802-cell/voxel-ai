@@ -1020,10 +1020,32 @@ class UI:
                 return True
         return False
 
+    def assistant_block(self, model, text, W, think=None, time_prefix=""):
+        """Step lines (→ / +) compact, real reply normal."""
+        steps = []
+        rest = []
+        for ln in text.split("\n"):
+            s = ln.strip()
+            if s.startswith("→") or s.startswith("+ ") or s.startswith("+Thought"):
+                steps.append(s)
+            else:
+                rest.append(ln)
+        out = []
+        if think is not None:
+            out.append("    " + C_MUTED + "+ Thought: " + fmt_thought(think) + C_RESET)
+        if steps:
+            out += self.steps_block("\n".join(steps), W)
+        body_text = "\n".join(rest).strip("\n")
+        if body_text:
+            out += self.plain_block(model, body_text, W, time_prefix=time_prefix)
+        else:
+            out.append("    " + C_MUTED + model + C_RESET)
+        return out
+
     def plain_block(self, model, text, W, think=None, time_prefix=""):
         out = []
         if think is not None:
-            out.append("    " + C_MUTED + "Thought: " + fmt_thought(think) + C_RESET)
+            out.append("    " + C_MUTED + "+ Thought: " + fmt_thought(think) + C_RESET)
         lines = wrap_text(text, max(20, W - 6))
         for i, ln in enumerate(lines):
             if i == 0 and time_prefix:
@@ -1032,6 +1054,17 @@ class UI:
                 display = "    " + ln
             out.append(display)
         out.append("    " + C_MUTED + model + C_RESET)
+        return out
+
+    def steps_block(self, text, W):
+        """Compact opencode-style tool/step lines (→ ... / + Thought ...)."""
+        out = []
+        for ln in text.split("\n"):
+            s = ln.strip()
+            if not s:
+                continue
+            s = truncate(s, W - 8)
+            out.append("    " + C_MUTED + s + C_RESET)
         return out
 
     def prompt_line(self, W):
@@ -1210,7 +1243,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.19 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.20 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1289,12 +1322,20 @@ class UI:
             time_str = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
             if text.startswith("[tool "):
                 m = re.search(r"\[tool (\w+):", text)
-                body += self.card(C_MUTED, "✓ " + (m.group(1) if m else "tool") + (f" {time_str}" if time_str else ""), W)
+                tname = m.group(1) if m else "tool"
+                inner = text.split(": ", 1)[1].strip() if ": " in text else ""
+                res_m = re.search(r"exit=(-?\d+)", inner)
+                ok = not res_m or res_m.group(1) == "0"
+                icon = "✓" if ok else "✗"
+                summ = inner.split("] ", 1)[1] if "] " in inner else ""
+                summ = summ.split("[/Tool", 1)[0].strip()
+                summ = " ".join(summ.split())[:40]
+                body.append("    " + (C_GREEN if ok else C_ERRC) + f"{icon} {tname}" + C_MUTED + (f" — {summ}" if summ else "") + C_RESET)
                 continue
             if role == "user":
                 body += self.card(C_USER, text, W, time_prefix=time_str)
             else:
-                body += self.plain_block(msg.get("model") or self.model, text, W, think=msg.get("think"), time_prefix=time_str)
+                body += self.assistant_block(msg.get("model") or self.model, text, W, think=msg.get("think"), time_prefix=time_str)
         if self.streaming:
             elapsed = time.time() - self._stream_start
             speed = self._stream_tokens / elapsed if elapsed > 0 and self._stream_tokens > 0 else 0
@@ -2029,7 +2070,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.19" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.20" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
