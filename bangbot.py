@@ -319,6 +319,14 @@ def truncate(text, limit=OUT_LIMIT):
     return text
 
 
+def short(text, limit):
+    """Clean single-line truncation with ellipsis."""
+    flat = " ".join(text.split())
+    if len(flat) > limit:
+        return flat[:limit - 1] + "…"
+    return flat
+
+
 # ---------------- permissions ----------------
 
 def perm_rule(cfg, category, key):
@@ -420,10 +428,10 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
             return "[Tool run: user denied]", None
         if wants_root and not shutil.which("su"):
             return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]", None
-        ui_note(C_DIM + f"$ {arg}" + ("  (root)" if wants_root else "") + C_RESET)
+        ui_note(C_DIM + f"$ {short(arg, 40)}" + ("  (root)" if wants_root else "") + C_RESET)
         code, out, shown = run_command(arg, root)
         if root:
-            ui_note(C_DIM + f"(root mode: su -c {shlex.quote(shown)})" + C_RESET)
+            ui_note(C_DIM + f"(root: {short(shown, 40)})" + C_RESET)
         if not wants_root and not cfg.get("root") and code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ) and shutil.which("su"):
@@ -480,7 +488,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
             return f"[Tool write {arg}]\nerror: {e}\n[/Tool write]", None
 
     if name == "search":
-        ui_note(C_DIM + f"🔎 searching: {content}")
+        ui_note(C_DIM + f"🔎 searching: {short(content, 40)}")
         try:
             res = ddg_search(content)
         except Exception as e:
@@ -1026,10 +1034,16 @@ class UI:
         return False
 
     def assistant_block(self, model, text, W, think=None, time_prefix=""):
-        """Step lines (→ / +) compact, real reply normal."""
+        """Step lines (→ / + / <run>/<write> tags) compact, real reply normal."""
         steps = []
         rest = []
-        for ln in text.split("\n"):
+        tag_re = re.compile(r"<(run|write|read|search)[^>]*>\s*(.*?)\s*</\1>", re.S)
+        def tag_line(m):
+            name = m.group(1)
+            cmd = short(m.group(2), 45)
+            return f"→ {name}" + (f": {cmd}" if cmd else "")
+        text2 = tag_re.sub(tag_line, text)
+        for ln in text2.split("\n"):
             s = ln.strip()
             if s.startswith("→") or s.startswith("+ ") or s.startswith("+Thought"):
                 steps.append(s)
@@ -1250,7 +1264,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.21 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.23 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1375,7 +1389,7 @@ class UI:
             if isinstance(n, dict):
                 body += self.diff_card(n, W)
             else:
-                for ln in wrap_text(n, W - 6):
+                for ln in wrap_text(short(n, W - 6), W - 6):
                     body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
             kind, key = self.popup
@@ -2101,7 +2115,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.21" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.23" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
