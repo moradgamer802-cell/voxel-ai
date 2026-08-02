@@ -1602,7 +1602,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.3 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.4 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -2470,6 +2470,7 @@ class UI:
 
     def run_turn(self):
         cmd_log = []
+        self._last_tools = []
         for round_no in range(MAX_TOOL_ROUNDS):
             t0 = time.time()
             content, reasoning, err, used_model = self.stream_reply()
@@ -2526,6 +2527,18 @@ class UI:
                     self.redraw()
                 break
             results = []
+            # v4: repeated-call guard — same tool+arg 3 bar mane AI loop e, stop
+            if not hasattr(self, "_last_tools"):
+                self._last_tools = []
+            sig = [(n, a.get("path", "")) for n, a, _ in tools]
+            self._last_tools.append(sig)
+            if len(self._last_tools) > 4:
+                self._last_tools.pop(0)
+            if len(self._last_tools) >= 3 and self._last_tools[-1] == self._last_tools[-2] == self._last_tools[-3]:
+                self.notes.append(C_RED + "⛔ AI loop e feshe geche (same tool 3 bar) — break" + C_RESET)
+                self.status = "loop-stopped"
+                self.redraw()
+                return
             for name, attrs, tcontent in tools:
                 if self.mode == "plan" and name in ("write", "run"):
                     self.notes.append(C_RED + "⛔ plan mode: " + name + " skip — shudhu plan/analyze" + C_RESET)
@@ -2619,7 +2632,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.3" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.4" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
