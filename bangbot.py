@@ -52,18 +52,21 @@ FREE_MODELS = [
     "nemotron-3-ultra-free",
 ]
 
-MAX_TOOL_ROUNDS = 5          # ek turn e max AI-round (8->5: thinking time half)
-MAX_TOOL_EXECS = 10          # ek turn e max tool execution (hard cap)
-TURN_TIME_BUDGET = 300       # ek turn max 5 min (thinking+tools) — loop e jome jabe na
+MAX_TOOL_ROUNDS = 2          # ek turn e max AI-round — 2 = normal response feel, loop nai
+MAX_TOOL_EXECS = 5           # ek turn e max tool execution (hard cap)
+TURN_TIME_BUDGET = 120       # ek turn max 2 min — loop e jome jabe na
 CMD_TIMEOUT = 120
 OUT_LIMIT = 3000
 
-SYSTEM_PROMPT = """Tumi VOXEL AI - ekta AI agent CLI, cholte ache Termux (Android terminal) e.
+SYSTEM_PROMPT = """Tumi VOXEL AI - ekta AI assistant CLI, cholte ache Termux (Android terminal) e.
 Bangla o English dui language e reply koro. User Banglish e likhle tumi o Banglish e reply diba.
 Answer chhoto, clear ar to-the-point hobe. Code thakle ``` block e diba.
 
-TOOL USE (khub important):
-Kono kaj korar dorkar hole, khali text diye korte jaibe na - ei tags use korbe:
+IMPORTANT: Simple question ba conversation e TOOL USE korte hobe na — direct text reply dao.
+Tool sudhu takhon use koro jokhon user specifically kono file dekhte, command chalate, ba search korte bole.
+
+TOOL USE (only when truly needed):
+Kono actual kaj korar dorkar hole ONLY THEN ei tags use korbe:
 
 <run>command</run>                        - Termux e command chalabe (ls, pwd, python3 etc)
 <read path="/path/to/file">x</read>     - file content dekhte
@@ -1785,20 +1788,15 @@ class UI:
                 # v4: tool results hidden — Commands Executed section e fold
                 continue
             if role == "user":
-                # v4.5: user msg — BOX NA, right-aligned plain lines (dim time + bold ❯)
-                UW = max(28, int(W * 0.62))
-                lead = max(4, W - UW)
-                cw = W - lead - 2
-                ulines = wrap_text(text, max(16, UW - 6))
+                # Left-aligned user message — ❯ indicator + clean text
+                ulines = wrap_text(text, max(20, W - 6))
                 for i, ln in enumerate(ulines):
                     if i == 0 and time_str:
-                        content = C_DIM + time_str + C_RESET + " " + C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET
+                        body.append("  " + C_DIM + time_str + C_RESET + " " + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET)
                     elif i == 0:
-                        content = C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET
+                        body.append("  " + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET)
                     else:
-                        content = C_TEXT + ln + C_RESET
-                    pad = max(0, cw - dlen(ANSI_RE.sub("", content)))
-                    body.append(" " * lead + content + " " * pad)
+                        body.append("    " + C_TEXT + ln + C_RESET)
                 body.append("")
             else:
                 alines = self.assistant_block(msg.get("model") or self.model, text, W,
