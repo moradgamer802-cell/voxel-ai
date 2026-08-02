@@ -1095,7 +1095,7 @@ class UI:
         text2 = tag_re.sub(tag_line, text)
         out = []
         if think is not None:
-            out.append("    " + C_MUTED + "+ Thought: " + fmt_thought(think) + C_RESET)
+            out += self.section_block(f"sec:{msg_idx}:think", "Thought: " + fmt_thought(think), "", W)
         sec_idx = 0
         sections = self._parse_sections(text2)
         for kind, title, content in sections:
@@ -1339,7 +1339,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.24 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.25 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -2197,7 +2197,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.24" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.25" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
