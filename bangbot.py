@@ -861,6 +861,8 @@ class UI:
         self.sess_idx = 0
         self.model_pick = None
         self.model_idx = 0
+        self.cmd_pick = False
+        self.cmd_idx = 0
         self.expand_diffs = set()
         self.renaming = False
         self.scroll_off = 0
@@ -1118,6 +1120,20 @@ class UI:
                 out.append(self.card_row(C_MUTED, "  " + c, W))
         return out
 
+    def cmd_pick_card(self, W):
+        out = []
+        out += self.card(C_ACC, C_BOLD + "Commands" + C_RESET, W)
+        items = ["AUTO"] + [c for c in COMMAND_LIST if c.startswith(self.buf)]
+        if self.cmd_idx >= len(items):
+            self.cmd_idx = 0
+        for i, c in enumerate(items):
+            label = "⚡ Auto-approve this session" if c == "AUTO" else c
+            if i == self.cmd_idx:
+                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
+            else:
+                out.append(self.card_row(C_MUTED, "  " + label, W))
+        return out
+
     def session_pick_card(self, W):
         out = []
         out += self.card(C_ACC, C_BOLD + "Sessions" + C_RESET + " " * (W - 15) + C_MUTED + "esc" + C_RESET, W)
@@ -1194,7 +1210,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.18 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.19 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1340,6 +1356,8 @@ class UI:
             body += self.session_pick_card(W)
         elif self.model_pick:
             body += self.model_pick_card(W)
+        elif self.cmd_pick:
+            body += self.cmd_pick_card(W)
         body_max = max(1, H - 5)
         if len(body) > body_max:
             max_scroll = len(body) - body_max
@@ -1419,6 +1437,9 @@ class UI:
             self.redraw()
         elif k.isprintable():
             self.buf = k
+            if k == "/":
+                self.cmd_pick = True
+                self.cmd_idx = 0
             self.open_session("__new__")
         else:
             self.redraw()
@@ -1440,6 +1461,36 @@ class UI:
             return
         elif k in ("ESC", "CTRL-C", "CTRL-P"):
             self.palette = False
+        self.redraw()
+
+    def key_cmd_pick(self, k):
+        items = ["AUTO"] + [c for c in COMMAND_LIST if c.startswith(self.buf)]
+        if k == "UP":
+            self.cmd_idx = max(0, self.cmd_idx - 1)
+        elif k == "DOWN":
+            self.cmd_idx = min(len(items) - 1, self.cmd_idx + 1)
+        elif k == "ENTER":
+            pick = items[self.cmd_idx]
+            self.cmd_pick = False
+            if pick == "AUTO":
+                self.auto_approve = True
+                self.buf = ""
+                self.notice("SYS", "Auto-approve ON — this session e kono permission ask korbe na")
+            elif pick in NEEDS_ARG:
+                self.buf = pick + " "
+            else:
+                self.buf = ""
+                self.run_command(pick)
+            self.redraw()
+            return
+        elif k in ("ESC", "CTRL-C"):
+            self.cmd_pick = False
+        elif k == "BACK":
+            self.buf = self.buf[:-1]
+            if not self.buf.startswith("/"):
+                self.cmd_pick = False
+        elif k.isprintable():
+            self.buf += k
         self.redraw()
 
     def open_session(self, name):
@@ -1477,6 +1528,9 @@ class UI:
             return
         if self.model_pick:
             self.key_model_pick(k)
+            return
+        if self.cmd_pick:
+            self.key_cmd_pick(k)
             return
         if k in ("WHEEL_UP", "WHEEL_DOWN"):
             self.scroll_off += 4 if k == "WHEEL_UP" else -4
@@ -1552,6 +1606,9 @@ class UI:
             self.redraw()
         elif k.isprintable():
             self.buf += k
+            if self.buf.startswith("/") and not self.renaming:
+                self.cmd_pick = True
+                self.cmd_idx = 0
             self.redraw()
         else:
             self.redraw()
@@ -1972,7 +2029,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.18" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.19" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
