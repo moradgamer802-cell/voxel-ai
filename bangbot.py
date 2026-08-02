@@ -773,6 +773,16 @@ def raw_key():
                     return "RIGHT"
                 if k == "D":
                     return "LEFT"
+                if k == "5":
+                    read_char()
+                    return "PGUP"
+                if k == "6":
+                    read_char()
+                    return "PGDN"
+                if k == "H":
+                    return "HOME_K"
+                if k == "F":
+                    return "END_K"
                 if k == "M":
                     for _ in range(3):
                         read_char()
@@ -915,6 +925,11 @@ class UI:
         self._anim_t0 = 0.0
         self._hdr_override = None
         self.sec_focus = None
+        self._cursor_on = True
+        self._last_key = 0.0
+        self._notice_t = 0.0
+        self._mode_flash = 0.0
+        self._approve_pop = 0.0
 
     def anim_header(self, new_title, W):
         """v4 session-switch header animation — typewriter reveal, 7 frames x 40ms."""
@@ -1005,6 +1020,7 @@ class UI:
                 print("  " + C_YELLOW + "[" + label + "] " + ln + C_RESET)
         else:
             self.notices = [(label, text)]
+            self._notice_t = time.time()
             self.redraw()
 
     # opencode-style rendering: full-width panel header bar, message cards
@@ -1031,6 +1047,27 @@ class UI:
                 display = ln
             out.append(self.card_row(color, display, W))
         return out
+
+    def notice_card(self, label, text, W):
+        """v4 micro: notice slide-in (180ms) + ERR shake (250ms) + SYS pulse."""
+        if label == "ERR":
+            color, icon = C_ERRC, "✗"
+        elif label == "SYS":
+            color, icon = C_ACC, "●"
+        elif label == "WARN":
+            color, icon = C_WARN, "⚠"
+        elif label == "GOOD":
+            color, icon = C_GOOD, "✓"
+        else:
+            color, icon = C_MUTED, "ℹ"
+        nt = time.time() - self._notice_t
+        pad = int(6 * max(0.0, 1.0 - nt / 0.18))
+        if label == "ERR" and nt < 0.25:
+            pad += max(0, int(2 * (1 - nt / 0.25)))
+        shown = text
+        if label == "SYS" and nt < 0.6 and int(nt * 12) % 2 == 0:
+            shown = C_BOLD + text
+        return self.card(color, " " * pad + " " + icon + " [" + label + "] " + shown, W)
 
     def diff_card(self, d, W):
         out = []
@@ -1291,24 +1328,32 @@ class UI:
         """opencode-style input box, border color = mode (plan green / build blue)."""
         color = C_PLAN if self.mode == "plan" else C_BUILD
         disp = self.buf
+        # v4: cursor blink 530/530, typing e freeze, 1s por resume
+        if time.time() - self._last_key < 1.0:
+            self._cursor_on = True
+        elif int(time.time() * 1000) % 1060 < 530:
+            self._cursor_on = True
+        else:
+            self._cursor_on = False
+        cursor = C_ACC + "▍" + C_RESET if self._cursor_on else ""
         while dlen(disp) > W - 12:
             disp = disp[1:]
         if dlen(disp) > W - 13:
             disp = "…" + disp
         if self.tiny_input:
             if disp:
-                inner = C_TEXT + disp + C_RESET + C_ACC + "▍" + C_RESET
+                inner = C_TEXT + disp + C_RESET + cursor
                 plain = "❯ " + disp + "▍"
             else:
-                inner = C_MUTED + "Type..." + C_RESET + C_ACC + "▍" + C_RESET
+                inner = C_MUTED + "Type..." + C_RESET + cursor
                 plain = "❯ Type...▍"
             pad = max(1, W - 4 - dlen(plain))
             return ["  " + color + "❯" + C_RESET + " " + inner + " " * pad]
         if disp:
-            inner = C_TEXT + disp + C_RESET + C_ACC + "▍" + C_RESET
+            inner = C_TEXT + disp + C_RESET + cursor
             plain = "❯ " + disp + "▍"
         else:
-            inner = C_MUTED + "Type a message... (or /help)" + C_RESET + C_ACC + "▍" + C_RESET
+            inner = C_MUTED + "Type a message... (or /help)" + C_RESET + cursor
             plain = "❯ " + "Type a message... (or /help)" + "▍"
         pad = max(1, W - 6 - dlen(plain))
         return [
@@ -1318,9 +1363,17 @@ class UI:
         ]
 
     def mode_chip(self):
+        # v4: mode switch e brief reverse-video flash (cross-fade)
         if self.mode == "plan":
-            return C_PLAN + "● plan" + C_RESET
-        return C_BUILD + "● build" + C_RESET
+            chip = C_PLAN + "● plan" + C_RESET
+        else:
+            chip = C_BUILD + "● build" + C_RESET
+        age = time.time() - self._mode_flash
+        if age < 0.15:
+            chip = "\x1b[7m" + C_BOLD + chip + C_RESET
+        elif age < 0.5:
+            chip = C_BOLD + chip
+        return chip
 
     def footer_line(self):
         if self.popup:
@@ -1468,7 +1521,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.2 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.3 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1512,19 +1565,7 @@ class UI:
         body.append("")
         body.append("  " + C_WARN + "● Tip" + C_RESET + " " + C_MUTED + "Type /help for commands · /models to change model" + C_RESET)
         for label, text in self.notices:
-            if label == "ERR":
-                color = C_ERRC
-                icon = "✗"
-            elif label == "SYS":
-                color = C_ACC
-                icon = "●"
-            elif label == "WARN":
-                color = C_WARN
-                icon = "⚠"
-            else:
-                color = C_MUTED
-                icon = "ℹ"
-            body += self.card(color, f" {icon} [{label}] " + text, W)
+            body += self.notice_card(label, text, W)
         body_max = max(1, H - 3)
         if len(body) > body_max:
             body = body[-body_max:]
@@ -1583,23 +1624,16 @@ class UI:
             else:
                 body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
         for label, text in self.notices:
-            if label == "ERR":
-                color = C_ERRC
-                icon = "✗"
-            elif label == "SYS":
-                color = C_ACC
-                icon = "●"
-            elif label == "WARN":
-                color = C_WARN
-                icon = "⚠"
-            else:
-                color = C_MUTED
-                icon = "ℹ"
-            body += self.card(color, f" {icon} [{label}] " + text, W)
-        for n in self.notes:
+            body += self.notice_card(label, text, W)
+        for i, n in enumerate(self.notes):
             if isinstance(n, dict):
                 body += self.diff_card(n, W)
             else:
+                # v4: auto-approve ✓ pop — last note line flashes bold 0.5s
+                if (self._approve_pop and i == len(self.notes) - 1
+                        and time.time() - self._approve_pop < 0.5
+                        and n.strip().startswith("✓")):
+                    n = C_BOLD + n + C_RESET
                 for ln in wrap_text(short(n, W - 6), W - 6):
                     body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
@@ -1637,6 +1671,11 @@ class UI:
             self.scroll_off = max(0, min(self.scroll_off, max_scroll))
             start = len(body) - body_max - self.scroll_off
             body = body[start:len(body) - self.scroll_off]
+            # v4: scroll indicators — ↑ more above / ↓ new below
+            if self.scroll_off > 0:
+                body[0] = "  " + C_MUTED + "↑ " + str(self.scroll_off) + " more · PgUp" + C_RESET
+            if self.scroll_off < max_scroll:
+                body[-1] = "  " + C_MUTED + "↓ new · PgDn" + C_RESET
         else:
             self.scroll_off = 0
             body += [""] * (body_max - len(body))
@@ -1650,6 +1689,9 @@ class UI:
     def redraw(self):
         if self.plain:
             return
+        # v4: notice auto-dismiss after 3s
+        if self.notices and time.time() - self._notice_t > 3.0:
+            self.notices = []
         W, H = term_size()
         self.adaptive(W, H)
         if self.route == "home":
@@ -1819,6 +1861,8 @@ class UI:
         self.anim_header(self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat"), W)
 
     def key_chat(self, k):
+        self._cursor_on = True
+        self._last_key = 0.0
         if self.palette:
             self.key_palette(k)
             return
@@ -1831,8 +1875,12 @@ class UI:
         if self.cmd_pick:
             self.key_cmd_pick(k)
             return
-        if k in ("WHEEL_UP", "WHEEL_DOWN"):
-            self.scroll_off += 4 if k == "WHEEL_UP" else -4
+        if k in ("WHEEL_UP", "WHEEL_DOWN", "PGUP", "PGDN"):
+            step = 4 if k in ("WHEEL_UP", "WHEEL_DOWN") else 5
+            if k in ("WHEEL_UP", "PGUP"):
+                self.scroll_off += step
+            else:
+                self.scroll_off -= step
             self.scroll_off = max(0, self.scroll_off)
             self.redraw()
             return
@@ -1952,6 +2000,7 @@ class UI:
 
     def toggle_mode(self):
         self.mode = "plan" if self.mode == "build" else "build"
+        self._mode_flash = time.time()
         if self.mode == "plan":
             self.notice("MODE", "Plan mode ON — AI shudhu analyze/plan korbe, kono file/command change korbe na. Build mode e firtte Tab.")
         else:
@@ -2151,7 +2200,7 @@ class UI:
         self._undo_msg = None
         if u["name"] and len(self.messages) > 1:
             save_session(u["name"], self.messages)
-        self.notice("SYS", "Message revert — abar edit kore pathate paren")
+        self.notice("SYS", "↶ Message revert — abar edit kore pathate paren")
         self.redraw()
 
     # ---------- chat flow ----------
@@ -2326,6 +2375,8 @@ class UI:
                     self.notes[note_idx] = diff_info
                 icon = "✓" if ok else "✗"
                 cmd_log.append(f"→ {name}: {short(arg, 40)} {icon} {fmt_duration(dur)}")
+                if ok and self.auto_approve:
+                    self._approve_pop = time.time()
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
@@ -2377,7 +2428,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.2" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.3" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
