@@ -1194,16 +1194,16 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.14 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.15 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
-            "  " + C_BOLD + C_TEXT + "  ██╗   ██╗ ██████╗ ██╗  ██╗    ███████╗██╗" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "  ╚██╗ ██╔╝██╔═══██╗╚██╗██╔╝    ██╔════╝██║" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "   ╚████╔╝ ██║   ██║ ╚███╔╝     ███████╗██║" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "    ╚██╔╝  ██║   ██║ ██╔██╗     ╚════██║╚═╝" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "     ██║   ╚██████╔╝██╔╝ ██╗    ███████║██╗" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "     ╚═╝    ╚═════╝ ╚═╝  ╚═╝    ╚══════╝╚═╝" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "██╗   ██╗ ██████╗ ██╗  ██╗ ███████╗ ██╗  █████╗ ██╗" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "╚██╗ ██╔╝██╔═══██╗╚██╗██╔╝ ██╔════╝ ██║ ██╔══██╗╚██╗" + C_RESET,
+            "  " + C_BOLD + C_TEXT + " ╚████╔╝ ██║   ██║ ╚███╔╝  ███████╗ ██║ ███████║ ██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "  ╚██╔╝  ██║   ██║ ██╔██╗  ╚════██║ ██║ ██╔══██║ ██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "   ██║   ╚██████╔╝██╔╝ ██╗ ███████║ ██║ ██║  ██║██╔╝" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚══════╝ ╚═╝ ╚═╝  ╚═╝╚═╝" + C_RESET,
         ]
         body.extend(logo)
         body.append("")
@@ -1279,7 +1279,7 @@ class UI:
             if role == "user":
                 body += self.card(C_USER, text, W, time_prefix=time_str)
             else:
-                body += self.plain_block(self.model, text, W, think=msg.get("think"), time_prefix=time_str)
+                body += self.plain_block(msg.get("model") or self.model, text, W, think=msg.get("think"), time_prefix=time_str)
         if self.streaming:
             elapsed = time.time() - self._stream_start
             speed = self._stream_tokens / elapsed if elapsed > 0 and self._stream_tokens > 0 else 0
@@ -1886,7 +1886,7 @@ class UI:
             SESSION_TOKENS["in"] += est_tokens(reasoning + content)
             SESSION_TOKENS["out"] += est_tokens(content)
             tools = parse_tools(content)
-            self.messages.append({"role": "assistant", "content": content, "time": time.time()})
+            self.messages.append({"role": "assistant", "content": content, "time": time.time(), "model": used_model})
             if getattr(self, "_think_secs", None) is not None:
                 self.messages[-1]["think"] = self._think_secs
             if not tools:
@@ -1973,7 +1973,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.14" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.15" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
