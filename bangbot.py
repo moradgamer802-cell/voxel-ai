@@ -157,7 +157,7 @@ SAFE_GLYPHS = {
     "◄": "<", "▶": ">", "○": "o", "▰": "=", "⬝": ".", "█": "#",
     "▏": "|", "▎": "|", "▌": "|", "▋": "|", "▊": "|", "▉": "|",
     "⣾": "/", "⣽": "/", "⣻": "/", "⢿": "/", "⡿": "/", "⣟": "/",
-    "⣯": "/", "⣷": "/", "⚡": "!", "⛔": "!",
+    "⣯": "/", "⣷": "/", "⚡": "!", "⛔": "!", "⏳": "!",
 }
 SAFE_RE = None
 
@@ -1539,6 +1539,10 @@ class UI:
                     speed_info = f" · ~{self._stream_tokens} tok · {speed:.0f}/s"
             return ("  " + C_ACC + self.spin + C_RESET + "  " + C_MUTED + "Thinking…" + C_RESET
                     + "  " + C_MUTED + "[Esc] Interrupt" + speed_info + C_RESET)
+        if getattr(self, "_tool_progress", None):
+            name, arg, _ = self._tool_progress
+            return ("  " + C_ACC + "⏳" + C_RESET + "  " + C_MUTED + f"{name}: {truncate(arg, 30)}" + C_RESET
+                    + "  " + C_MUTED + "[Esc] Interrupt · [Ctrl+P] Commands" + C_RESET)
         if self.route == "home":
             return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
         if self.scroll_off > 0:
@@ -1830,6 +1834,17 @@ class UI:
                     n = C_BOLD + n + C_RESET
                 for ln in wrap_text(short(n, W - 6), W - 6):
                     body.append("  " + C_DIM + ln + C_RESET)
+        # v4.5: tool work progress — box er niche ■■■■■⬝⬝⬝ animates jokhon AI kaj korbe
+        if getattr(self, "_tool_progress", None) and time.time() - self._tool_progress[2] > 0.15:
+            name, arg, _ = self._tool_progress
+            n_seg, w = 12, 5
+            if self.anim:
+                pos = int(time.time() * 6) % n_seg
+                segs = "".join("█" if ((i - pos) % n_seg) < w else "⬝" for i in range(n_seg))
+            else:
+                segs = "█" * w + "⬝" * (n_seg - w)
+            body.append("    " + C_ACC + segs + C_RESET + "  " + C_MUTED
+                        + name + ": " + truncate(arg, 40) + C_RESET)
         pop_all = []
         if self.popup:
             kind, key = self.popup
@@ -2563,6 +2578,12 @@ class UI:
         exec_count = 0
         t_turn0 = time.time()
         for round_no in range(MAX_TOOL_ROUNDS):
+            if getattr(self, "cancel", False):
+                # v4.5: Esc during tool work — turn ekhanei shesh (stream_reply cancel reset kore dibe na)
+                self.notice("SYS", "cancelled")
+                self.status = "cancelled"
+                self.redraw()
+                return
             t0 = time.time()
             content, reasoning, err, used_model = self.stream_reply()
             dt = fmt_duration(time.time() - t0)
