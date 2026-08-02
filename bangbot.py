@@ -70,7 +70,19 @@ Kono kaj korar dorkar hole, khali text diye korte jaibe na - ei tags use korbe:
 <search>question</search>              - internet search
 
 Rules:
-- STORAGE IMPORTANT: User jokhon storage/file access bole (like "storage kholo", "sdcard", "internal memory", "file ta dekho"), ALWAYS `/storage/emulated/0/` path use korbe (NOT `~`, NOT Termux home, NOT relative path). E.g. `<ls>/storage/emulated/0</ls>`, `<run>ls /storage/emulated/0</run>`.
+## STORAGE PATH RULE (CRITICAL - NEVER BREAK)
+When user mentions: storage, sdcard, internal memory, files, folders, photos, downloads, documents, music, pictures, DCIM, Android, or any file access:
+- You MUST ALWAYS use absolute path: `/storage/emulated/0/`
+- You MUST NEVER use: `~`, `~/storage`, `/sdcard`, `$HOME`, relative paths, or Termux home directory
+- ALL <run>, <ls>, <read>, <write> tags MUST use `/storage/emulated/0/` prefix
+- Examples:
+  - "storage kholo" → <ls>/storage/emulated/0/</ls>
+  - "downloads dekho" → <ls>/storage/emulated/0/Download/</ls>
+  - "file.txt read koro" → <read path="/storage/emulated/0/file.txt">x</read>
+  - "eikhane write koro" → <write path="/storage/emulated/0/output.txt">content</write>
+  - "cd kore dekhbo" → <run>cd /storage/emulated/0 && ls</run>
+- If user specific folder na bole, default to `/storage/emulated/0/`
+- NEVER assume Termux home (`/data/data/com.termux/files/home`) for user files
 - <search> always allowed — internet search kono permission chara cholbe (default capability).
 - <read>/<ls> o default allowed (read-only). <write>/<run> e prompt asbe: Yes/No/Always (arrow diye select).
 - Ekbare ekta tag use koro, result ashle tarpor aro kaj lagle abar tag use korbe.
@@ -434,14 +446,45 @@ def make_diff_lines(old, new, ctx=2):
     return lines
 
 
-def storage_path(p):
-    """~/storage, /sdcard -> /storage/emulated/0 (Termux default er bodole internal storage)"""
-    p = p.replace("$HOME/storage", "/storage/emulated/0")
-    if p == "~/storage" or p.startswith("~/storage/"):
-        p = "/storage/emulated/0" + p[len("~/storage"):]
+def storage_path(p: str) -> str:
+    """User er path ke ALWAYS /storage/emulated/0 te map kore.
+    /sdcard, ~/storage, ~, relative path — sob handle kore. (User files storage e, Termux home NA)"""
+    if p.startswith("/storage/emulated/0"):
+        return p
     if p == "/sdcard" or p.startswith("/sdcard/"):
-        p = "/storage/emulated/0" + p[len("/sdcard"):]
-    return os.path.expanduser(p)
+        return "/storage/emulated/0" + p[len("/sdcard"):]
+    if p == "~/storage" or p.startswith("~/storage/"):
+        return "/storage/emulated/0" + p[len("~/storage"):]
+    if p in ("storage", "sdcard", "internal", "internal memory", "phone storage"):
+        return "/storage/emulated/0"
+    if p == "~" or p.startswith("~/"):
+        return "/storage/emulated/0" + p[1:]
+    if not p.startswith("/"):
+        return os.path.join("/storage/emulated/0", p)
+    return p
+
+
+def sanitize_run_cmd(cmd):
+    """run command er bhul path patterns -> /storage/emulated/0 (cd /storage, ~, /sdcard...)."""
+    cmd = cmd.replace("$HOME/storage", "/storage/emulated/0")
+    cmd = cmd.replace("~/storage", "/storage/emulated/0")
+    cmd = cmd.replace("/sdcard", "/storage/emulated/0")
+    cmd = re.sub(r"(?<!\S)~(?=\s|['\"]|$)", "/storage/emulated/0", cmd)
+    cmd = re.sub(r"(?<!\S)/storage(?!/emulated)(?=[/\s'\"]|$)", "/storage/emulated/0", cmd)
+    cmd = re.sub(r"(?<!\S)cd\s+(storage|sdcard)\b", "cd /storage/emulated/0", cmd)
+    return cmd
+
+
+def sanitize_tool_args(name, attrs, content):
+    """parse_tools er por — prottek tool er path auto-correct kore storage te."""
+    if name in ("ls", "read", "write"):
+        if "path" in attrs:
+            attrs["path"] = storage_path(attrs["path"])
+        if name == "ls" and not attrs.get("path"):
+            content = storage_path(content)
+    elif name == "run":
+        content = sanitize_run_cmd(content)
+    return name, attrs, content
 
 
 def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=False):
@@ -451,7 +494,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
         if not check_perm(cfg, "cmd", arg, session_perm, auto_approve=auto_approve):
             return "[Tool run: user denied]", None
         ui_note(C_DIM + f"$ {short(arg, 40)}" + C_RESET)
-        code, out, shown = run_command(storage_path(arg), False)
+        code, out, shown = run_command(sanitize_run_cmd(arg), False)
         if code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ):
@@ -1633,7 +1676,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.0 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.1 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -2528,6 +2571,8 @@ class UI:
             SESSION_TOKENS["in"] += est_tokens(reasoning + content)
             SESSION_TOKENS["out"] += est_tokens(content)
             tools = parse_tools(content)
+            # v4.5 storage fix: AI er bhul path (~, /sdcard, relative) auto-correct kore /storage/emulated/0
+            tools = [sanitize_tool_args(n, a, c) for n, a, c in tools]
             if not tools and not content.strip():
                 # v4: empty reply guard — kono content nei, loop e jamabo na
                 if self.messages and self.messages[-1].get("role") == "assistant":
@@ -2669,7 +2714,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.0" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.1" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
