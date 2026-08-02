@@ -663,8 +663,15 @@ def show_perms(cfg):
     return "\n".join(lines)
 
 
+def safe_name(name):
+    """Session name sanitize — path traversal (/..) theke surokkha."""
+    name = re.sub(r"[^A-Za-z0-9._ -]", "_", str(name)).strip()
+    return name or "chat"
+
+
 def save_session(name, messages):
     os.makedirs(CHATS_DIR, exist_ok=True)
+    name = safe_name(name)
     path = os.path.join(CHATS_DIR, name + ".json")
     with open(path, "w") as f:
         json.dump(messages, f, ensure_ascii=False, indent=2)
@@ -677,6 +684,7 @@ def list_sessions():
 
 
 def load_session(name):
+    name = safe_name(name)
     path = os.path.join(CHATS_DIR, name + ".json")
     try:
         with open(path) as f:
@@ -1124,6 +1132,11 @@ class UI:
     # with left accent border, plain assistant text, prompt + footer
 
     def hdr(self, title, right, W):
+        avail = max(10, W - 6)
+        if dlen(title) + dlen(right) > avail:
+            right = short(right, max(4, avail - dlen(title)))
+        if dlen(title) + dlen(right) > avail:
+            title = short(title, max(4, avail - dlen(right)))
         pad = max(1, W - 4 - dlen(title) - dlen(right))
         return ("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD + C_TEXT + title
                 + C_RESET + C_PANEL + " " * pad + C_MUTED + right + C_RESET)
@@ -1339,8 +1352,7 @@ class UI:
         return "\n".join(lines)
 
     def assistant_block(self, model, text, W, think=None, reasoning="", time_prefix="", msg_idx=0):
-        """v4.5 redesigned: tool work DIM outside (no box), reply body + sections INSIDE
-        purple VOXEL box, model tag bottom-right inside, 1 turn = 1 box."""
+        """v4.5: reply box = steps (→ run ✓) + body ek box e; tool-only round dim outside."""
         tag_re = re.compile(r"<(run|write|read|search)[^>]*>\s*(.*?)\s*</\1>", re.S)
         def tag_line(m):
             name = m.group(1)
@@ -1349,6 +1361,8 @@ class UI:
         text2 = tag_re.sub(tag_line, text)
         outside = []
         inner = []
+        steps_lns = []
+        has_text = False
         sec_idx = 0
         sec_keys = []
         sections = self._parse_sections(text2)
@@ -1364,11 +1378,14 @@ class UI:
                 steps = [x for x in content.split("\n") if x.strip().startswith("→ ")]
                 body = [x for x in content.split("\n") if not x.strip().startswith("→ ")]
                 for s in steps:
-                    outside.append("    " + self._status_line(s.strip(), W))
-                if "".join(body).strip():
-                    for ln in wrap_text("\n".join(body), max(20, W - 6)):
+                    steps_lns.append(self._status_line(s.strip(), W))
+                body_txt = "\n".join(body).strip("\n")
+                if body_txt.strip():
+                    has_text = True
+                    for ln in wrap_text(body_txt, max(20, W - 6)):
                         inner.append(C_TEXT + ln + C_RESET)
             elif kind == "head":
+                has_text = True
                 inner.append(C_HIGHLIGHT + C_TEXT + title + ":" + C_RESET)
                 if content.strip():
                     for ln in wrap_text(content, max(20, W - 6)):
@@ -1377,11 +1394,18 @@ class UI:
                 key = f"sec:{msg_idx}:{sec_idx}"
                 sec_idx += 1
                 sec_keys.append(key)
-                # v4.5: tool/cmd sections BOX ER BAIRE — dim collapsible lines (box e dekhte kharap)
+                # tool/cmd sections BOX ER BAIRE — dim collapsible lines
                 outside += self.section_block(key, title or "Details", content, W,
                                               focused=(key == self.sec_focus), pad="    ")
             elif kind == "meta":
                 inner.append(C_MUTED + content + C_RESET)
+        if has_text:
+            # steps box er VITORE (timestamp-er por), blank row, tarpor body
+            inner = steps_lns + ([""] if steps_lns else []) + inner
+        else:
+            # tool-only round — box na, dim outside lines
+            for sln in steps_lns:
+                outside.append("    " + sln)
         if not inner:
             self._sec_keys = sec_keys
             return outside
@@ -1392,11 +1416,22 @@ class UI:
         for ln in inner:
             box.append(self.box_row(C_ACC, ln, W))
         box.append(self.box_row(C_ACC, "", W))
-        tag = C_DIM + "-".join(model.split("-")[:2]) + C_RESET
+        tag = C_DIM + self._short_tag(model) + C_RESET
         box.append(self.box_row_right(C_ACC, tag, W))
         box.append(self.box_bottom(C_ACC, W))
         self._sec_keys = sec_keys
         return outside + box
+
+    def _short_tag(self, model):
+        """deepseek-v4-flash-free -> ds-v4 (compact model tag, box-er niche-right)."""
+        parts = model.split("-")
+        if not parts:
+            return "ai"
+        if parts[0].startswith("deepseek"):
+            return "ds-" + (parts[1] if len(parts) > 1 else parts[0][:4])
+        if len(parts) > 1:
+            return parts[0][:2] + "-" + parts[1]
+        return parts[0][:6]
 
     def section_block(self, key, title, content, W, focused=False, no_suffix=False, pad=""):
         """v4.5 collapsible dim section — pad="    " box er baire, pad="" box er vitore."""
@@ -1436,33 +1471,6 @@ class UI:
         if extra:
             base += " " + C_MUTED + extra + C_RESET
         return base
-
-    def plain_block(self, model, text, W, think=None, time_prefix="", show_model=True):
-        """Main reply body — BRIGHT white (sole bright element, v4 spec)."""
-        out = []
-        if think is not None:
-            out.append("    " + C_MUTED + "+ Thought: " + fmt_thought(think) + C_RESET)
-        lines = wrap_text(text, max(20, W - 6))
-        for i, ln in enumerate(lines):
-            if i == 0 and time_prefix:
-                display = "    " + C_MUTED + time_prefix + C_RESET + " " + C_TEXT + ln + C_RESET
-            else:
-                display = "    " + C_TEXT + ln + C_RESET
-            out.append(display)
-        if show_model:
-            out.append("    " + C_MUTED + model + C_RESET)
-        return out
-
-    def steps_block(self, text, W):
-        """Compact dim tool/step lines (→ ...) — v4: gray 245."""
-        out = []
-        for ln in text.split("\n"):
-            s = ln.strip()
-            if not s:
-                continue
-            s = truncate(s, W - 8)
-            out.append("    " + C_MUTED + s + C_RESET)
-        return out
 
     def prompt_line(self, W):
         disp = self.buf
@@ -1690,7 +1698,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.3 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.4 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1769,19 +1777,20 @@ class UI:
                 # v4: tool results hidden — Commands Executed section e fold
                 continue
             if role == "user":
-                # v4.5: green YOU box — RIGHT side (WhatsApp style), time inside, ❯ bold
+                # v4.5: user msg — BOX NA, right-aligned plain lines (dim time + bold ❯)
                 UW = max(28, int(W * 0.62))
                 lead = max(4, W - UW)
+                cw = W - lead - 2
                 ulines = wrap_text(text, max(16, UW - 6))
-                body.append(self.box_top(C_USER, "YOU", W, lead=lead, bw=UW))
-                if time_str:
-                    body.append(self.box_row(C_USER, C_DIM + time_str + C_RESET, W, lead=lead, bw=UW))
                 for i, ln in enumerate(ulines):
-                    if i == 0:
-                        body.append(self.box_row(C_USER, C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET, W, lead=lead, bw=UW))
+                    if i == 0 and time_str:
+                        content = C_DIM + time_str + C_RESET + " " + C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET
+                    elif i == 0:
+                        content = C_BOLD + C_USER + "❯" + C_RESET + " " + C_TEXT + ln + C_RESET
                     else:
-                        body.append(self.box_row(C_USER, C_TEXT + ln + C_RESET, W, lead=lead, bw=UW))
-                body.append(self.box_bottom(C_USER, W, lead=lead, bw=UW))
+                        content = C_TEXT + ln + C_RESET
+                    pad = max(0, cw - dlen(ANSI_RE.sub("", content)))
+                    body.append(" " * lead + content + " " * pad)
                 body.append("")
             else:
                 alines = self.assistant_block(msg.get("model") or self.model, text, W,
@@ -2442,7 +2451,7 @@ class UI:
                 self.notice("SYS", "Session paoa gelo na: " + name)
             return True
         if user_input.startswith("/rm "):
-            name = user_input.split(None, 1)[1].strip()
+            name = safe_name(user_input.split(None, 1)[1].strip())
             try:
                 os.remove(os.path.join(CHATS_DIR, name + ".json"))
                 self.notice("SYS", "Deleted: " + name)
@@ -2779,7 +2788,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.3" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.4" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
