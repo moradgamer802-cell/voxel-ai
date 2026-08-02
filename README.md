@@ -34,7 +34,12 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 - **Touch scrollback** — chat e upor/dhon swipe korle purono messages dekha jay (mouse tracking on), niche swipe = notun messages; type korlei bottom e fere ase
 - **Compact tool logs** — tool er full output chat e dekha jay na: `✓ run: <cmd>` / `✗ run: <cmd> — <error>` short line
 - **Diff view on file writes** — AI file rewrite korle opencode er moto diff card dekhabe: `← Edit <path>` header + line numbers, `-` red / `+` green (new file: `← Write <path>`). Boro diff (6+ line) hoile choto kore `… N more` + `+N −N` stats + `[Enter] expand` hint dekhabe; khali `Enter` chaple full diff expand/collapse hobe
-- **Boot = Home screen** — app khule home e ase (recent sessions list), type korlei new chat
+- **Home screen** — session list with message count, last message preview, relative timestamps
+- **Chat header** — `# title · N msgs` format, shows session state
+- **Message timestamps** — `HH:MM` prefix on each message
+- **Streaming stats** — `~N tok · X tok/s` live counter during reply
+- **Styled notices** — ✗ ERR (red), ● SYS (green), ⚠ WARN (yellow), ℹ INFO (gray)
+- **Dynamic footer** — context-aware hints: streaming shows speed, typing shows mode, commands show complete
 - **Plan/Build mode (`Tab`)** — Tab chaple mode toggle: Plan (green) = AI shudhu analyze/plan kore, kono file/command change na; Build (blue) = full agent. `/mode`, `/plan`, `/build` o kaj kore
 - **Input box** — opencode er moto bordered input box, border color = mode (plan green / build blue)
 - **Smooth streaming** — reply "1ta 1ta" kore typewriter style e ashe (race-free reveal)

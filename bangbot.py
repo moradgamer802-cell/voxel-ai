@@ -651,12 +651,29 @@ def rel_time(ts):
 
 
 def session_list():
+    """Returns list of (name, mtime, msg_count, preview) sorted by most recent."""
     os.makedirs(CHATS_DIR, exist_ok=True)
     out = []
     for f in os.listdir(CHATS_DIR):
         if f.endswith(".json"):
             p = os.path.join(CHATS_DIR, f)
-            out.append((f[:-5], os.path.getmtime(p)))
+            mtime = os.path.getmtime(p)
+            msgs = load_session(f[:-5])
+            if msgs and isinstance(msgs, list):
+                count = len([m for m in msgs if m.get("role") != "system"])
+                preview = ""
+                for m in reversed(msgs):
+                    if m.get("role") == "user":
+                        preview = m.get("content", "")[:40].replace("\n", " ")
+                        break
+                if not preview:
+                    for m in reversed(msgs):
+                        if m.get("role") == "assistant":
+                            preview = m.get("content", "")[:40].replace("\n", " ")
+                            break
+                out.append((f[:-5], mtime, count, preview))
+            else:
+                out.append((f[:-5], mtime, 0, ""))
     out.sort(key=lambda x: -x[1])
     return out
 
@@ -926,12 +943,17 @@ class UI:
         pad = max(0, W - 6 - dlen(text))
         return "  " + color + "│" + C_RESET + C_PANEL + " " + text + " " * pad + C_RESET
 
-    def card(self, color, text, W, top_gap=False):
+    def card(self, color, text, W, top_gap=False, time_prefix=""):
         out = []
         if top_gap:
             out.append(self.card_row(color, "", W))
-        for ln in wrap_text(text, max(20, W - 6)):
-            out.append(self.card_row(color, ln, W))
+        lines = wrap_text(text, max(20, W - 6))
+        for i, ln in enumerate(lines):
+            if i == 0 and time_prefix:
+                display = C_DIM + time_prefix + C_RESET + " " + ln
+            else:
+                display = ln
+            out.append(self.card_row(color, display, W))
         return out
 
     def diff_card(self, d, W):
@@ -985,12 +1007,17 @@ class UI:
                 return True
         return False
 
-    def plain_block(self, model, text, W, think=None):
+    def plain_block(self, model, text, W, think=None, time_prefix=""):
         out = []
         if think is not None:
             out.append("    " + C_MUTED + "Thought: " + fmt_thought(think) + C_RESET)
-        for ln in wrap_text(text, max(20, W - 6)):
-            out.append("    " + ln)
+        lines = wrap_text(text, max(20, W - 6))
+        for i, ln in enumerate(lines):
+            if i == 0 and time_prefix:
+                display = "    " + C_DIM + time_prefix + C_RESET + " " + ln
+            else:
+                display = "    " + ln
+            out.append(display)
         out.append("    " + C_MUTED + model + C_RESET)
         return out
 
@@ -1039,7 +1066,13 @@ class UI:
         if self.streaming:
             p = SPINNER.index(self.spin) % 9 if self.spin in SPINNER else 0
             bar = "▰" * p + "⬝" * (8 - p)
-            return "  " + C_ACC + bar + C_RESET + "  " + C_MUTED + "[Esc] Interrupt · [Ctrl+P] Commands" + C_RESET
+            speed_info = ""
+            if self._stream_tokens > 0:
+                elapsed = time.time() - self._stream_start
+                speed = self._stream_tokens / elapsed if elapsed > 0 else 0
+                if speed > 0:
+                    speed_info = f" · {self._stream_tokens} tok · {speed:.0f}/s"
+            return "  " + C_ACC + bar + C_RESET + "  " + C_MUTED + "[Esc] Interrupt" + speed_info + C_RESET
         if self.route == "home":
             return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
         if self.scroll_off > 0:
@@ -1049,12 +1082,15 @@ class UI:
         parts = ["[Enter] Send"]
         if self.buf.startswith("/"):
             parts.append("[Tab] Complete")
-        else:
+        elif self.buf:
             parts.append("[Tab] Plan/Build")
+        else:
+            parts.append("[Tab] Mode")
         parts.append("[Esc] Home")
         if self.loaded_name:
             parts.append("[Ctrl+D] Del · [Ctrl+R] Rename")
         parts.append("[Ctrl+P]")
+        return "  " + C_MUTED + " · ".join(parts) + C_RESET
         return "  " + C_MUTED + " · ".join(parts) + C_RESET
 
     def palette_card(self, W):
@@ -1070,11 +1106,14 @@ class UI:
     def session_pick_card(self, W):
         out = []
         out += self.card(C_ACC, C_BOLD + "📁 Sessions — select kore Enter (Esc close)" + C_RESET, W)
-        for i, (name, t) in enumerate(self.sess_pick):
+        for i, item in enumerate(self.sess_pick):
+            name = item[0]
+            count = item[2] if len(item) > 2 else 0
+            label = f"{name} ({count} msgs)"
             if i == self.sess_idx:
-                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + name + C_RESET, W))
+                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
             else:
-                out.append(self.card_row(C_MUTED, "  " + name, W))
+                out.append(self.card_row(C_MUTED, "  " + label, W))
         return out
 
     def key_sess_pick(self, k):
@@ -1092,29 +1131,45 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.10 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.11 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
-        items = [("__new__", "＋ New Chat", "start a fresh chat")] + \
-                [(n, n, rel_time(t)) for n, t in session_list()]
+        items = [("__new__", "＋ New Chat", "start a fresh chat", "")] + \
+                [(n, n, rel_time(t), f"{c} msgs" + (f" · {p}" if p else "")) for n, t, c, p in session_list()]
         self.cur = max(0, min(self.cur, len(items) - 1))
-        for i, (name, label, sub) in enumerate(items):
+        for i, (name, label, sub, info) in enumerate(items):
             if i == self.cur:
                 pad = max(1, W - 6 - dlen(label) - dlen(sub))
                 body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
                             + C_TEXT + label + C_RESET + C_PANEL + " " * pad
                             + C_MUTED + sub + C_RESET)
+                if info:
+                    body.append("  " + C_ACC + "│" + C_RESET + C_DIM + "  " + info + C_RESET)
             else:
                 pad = max(1, W - 4 - dlen(label) - dlen(sub))
                 body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
+                if info:
+                    body.append("      " + C_DIM + info[:W-8] + C_RESET)
         body.append("")
         if self.palette:
             body += self.palette_card(W)
         else:
             body.append("  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Ctrl+P = commands" + C_RESET)
         for label, text in self.notices:
-            body += self.card(C_WARN, "[" + label + "] " + text, W)
+            if label == "ERR":
+                color = C_ERRC
+                icon = "✗"
+            elif label == "SYS":
+                color = C_ACC
+                icon = "●"
+            elif label == "WARN":
+                color = C_WARN
+                icon = "⚠"
+            else:
+                color = C_MUTED
+                icon = "ℹ"
+            body += self.card(color, f" {icon} [{label}] " + text, W)
         body_max = max(1, H - 3)
         if len(body) > body_max:
             body = body[-body_max:]
@@ -1129,19 +1184,26 @@ class UI:
         tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
         right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
         title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
+        msg_count = len([m for m in self.messages if m.get("role") != "system"])
+        if msg_count > 0:
+            title += f" · {msg_count} msgs"
         lines = [self.hdr("# " + title, right, W)]
         body = []
         for msg in self.messages[1:]:
             role, text = msg["role"], msg["content"]
+            ts = msg.get("time")
+            time_str = time.strftime("%H:%M", time.localtime(ts)) if ts else ""
             if text.startswith("[tool "):
                 m = re.search(r"\[tool (\w+):", text)
-                body += self.card(C_MUTED, "✓ " + (m.group(1) if m else "tool"), W)
+                body += self.card(C_MUTED, "✓ " + (m.group(1) if m else "tool") + (f" {time_str}" if time_str else ""), W)
                 continue
             if role == "user":
-                body += self.card(C_USER, text, W)
+                body += self.card(C_USER, text, W, time_prefix=time_str)
             else:
-                body += self.plain_block(self.model, text, W, think=msg.get("think"))
+                body += self.plain_block(self.model, text, W, think=msg.get("think"), time_prefix=time_str)
         if self.streaming:
+            elapsed = time.time() - self._stream_start
+            speed = self._stream_tokens / elapsed if elapsed > 0 and self._stream_tokens > 0 else 0
             if self.pending:
                 plines = wrap_text(self.pending, max(20, W - 6))
                 for i, ln in enumerate(plines):
@@ -1149,10 +1211,24 @@ class UI:
                         body.append("    " + ln + C_DIM + "▍" + C_RESET)
                     else:
                         body.append("    " + ln)
+                if speed > 0:
+                    body.append("    " + C_DIM + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
             else:
                 body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
         for label, text in self.notices:
-            body += self.card(C_WARN, "[" + label + "] " + text, W)
+            if label == "ERR":
+                color = C_ERRC
+                icon = "✗"
+            elif label == "SYS":
+                color = C_ACC
+                icon = "●"
+            elif label == "WARN":
+                color = C_WARN
+                icon = "⚠"
+            else:
+                color = C_MUTED
+                icon = "ℹ"
+            body += self.card(color, f" {icon} [{label}] " + text, W)
         for n in self.notes:
             if isinstance(n, dict):
                 body += self.diff_card(n, W)
@@ -1239,7 +1315,7 @@ class UI:
         if self.palette:
             self.key_palette(k)
             return
-        items = [("__new__",)] + [(n,) for n, _ in session_list()]
+        items = [("__new__",)] + [(n,) for n, _, _, _ in session_list()]
         if k == "UP":
             self.cur = max(0, self.cur - 1)
             self.redraw()
@@ -1552,7 +1628,7 @@ class UI:
                 self.notice("SESSIONS", "Kono saved session nai.")
                 return True
             if self.plain:
-                txt = "Saved sessions: " + (", ".join(n for n, _ in lst))
+                txt = "Saved sessions: " + (", ".join(f"{n} ({c} msgs)" for n, _, c, _ in lst))
                 self.notice("SESSIONS", txt + "\nLoad: /load <name> | Delete: /rm <name>")
             else:
                 self.sess_pick = lst
@@ -1599,7 +1675,7 @@ class UI:
             return
         self.notices = []
         self.notes = []
-        self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text, "time": time.time()})
         self.status = self.model
         self.redraw()
         try:
@@ -1622,6 +1698,7 @@ class UI:
                 if self._think_secs is None:
                     self._think_secs = time.time() - self._think_start
                 self._acc += text
+                self._stream_tokens = est_tokens(self._acc)
 
         def worker():
             result["err"], result["model"] = call_chat(msgs, self.model, self.api_key, on_chunk)
@@ -1635,6 +1712,8 @@ class UI:
         self._think_start = time.time()
         self._think_secs = None
         self._revealed = 0
+        self._stream_start = time.time()
+        self._stream_tokens = 0
         self.pending = ""
         typed = []
         self.redraw()
@@ -1697,7 +1776,7 @@ class UI:
             SESSION_TOKENS["in"] += est_tokens(reasoning + content)
             SESSION_TOKENS["out"] += est_tokens(content)
             tools = parse_tools(content)
-            self.messages.append({"role": "assistant", "content": content})
+            self.messages.append({"role": "assistant", "content": content, "time": time.time()})
             if getattr(self, "_think_secs", None) is not None:
                 self.messages[-1]["think"] = self._think_secs
             if not tools:
@@ -1736,7 +1815,7 @@ class UI:
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
-            self.messages.append({"role": "user", "content": "\n".join(results)})
+            self.messages.append({"role": "user", "content": "\n".join(results), "time": time.time()})
         else:
             self.notice("SYS", "Max tool rounds — /new diye fresh koro.")
         if self.loaded_name and len(self.messages) > 1:
@@ -1784,7 +1863,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.10" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.11" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
