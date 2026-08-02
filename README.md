@@ -58,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
   - Rules: `/perm cmd add 'rm' deny`, `/perm rootcmd add 'mount' always`, `/perm cmd always` (default)
   - **Allow session** — current chat-e auto allow, next chat-e ask again
   - **Ctrl+E** — auto-approve toggle (all permissions auto-allow, no prompts)
-- **Per-message model tag** — prottek assistant reply er niche oi reply er model er name thake (model change korleo purono message er tag bodhole na)
+- **Collapsible AI replies** — `**Summary:**` + `▸ Title (collapsed)` sections hidden by default (dim), empty Enter diye expand/collapse; `**Final Reply:**`/`**Result:**`/`**Location:**` bold visible, timestamp plain
 - **Root support** — rooted phone e `su -c` diye system-level kaj; non-rooted phone e automatic normal mode
 - **Auto model fallback** — rate limit/error hole onno free model e automatic switch
 - **Session manager** — `/save`, `/load`, `/sessions`, `/rm` + auto-save; session e `Ctrl+D` = delete (Yes/No confirm), `Ctrl+R` = rename (name edit kore Enter), footer e hint dekhabe
