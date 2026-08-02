@@ -1003,7 +1003,10 @@ def _key_chat(self, k, agent):
             self.hist.append(text)
             self.hidx = len(self.hist)
             self.buf = ""
-            agent.send(text)
+            response = agent.send(text, self)
+            if response:
+                self.notice("SYS", response[:200])
+            self.redraw()
         elif self.sec_focus:
             pass
         else:

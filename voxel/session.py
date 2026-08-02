@@ -79,10 +79,16 @@ def list_sessions():
             try:
                 with open(p, "r") as fh:
                     data = json.load(fh)
+                if isinstance(data, dict):
+                    messages = data.get("messages", [])
+                elif isinstance(data, list):
+                    messages = data
+                else:
+                    continue
                 mtime = os.path.getmtime(p)
-                count = len([m for m in data.get("messages", []) if m.get("role") != "system"])
+                count = len([m for m in messages if m.get("role") != "system"])
                 preview = ""
-                for m in reversed(data.get("messages", [])):
+                for m in reversed(messages):
                     if m.get("role") == "user":
                         preview = m.get("content", "")[:30]
                         break
