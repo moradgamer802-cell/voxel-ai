@@ -88,6 +88,7 @@ class TermUI:
         self._sec_anim = None
         self._notice_t = 0.0
         self._approve_pop = 0.0
+        self.sec_focus = False
 
     def _term_size(self):
         rows = cols = 0
@@ -283,19 +284,37 @@ class TermUI:
         body.append("")
         body.append("  " + C_MUTED + "Sessions" + C_RESET)
         body.append("")
-        items = list_sessions()
-        self.cur = max(0, min(self.cur, len(items)))
-        for i, (name, t, count, preview) in enumerate(items[:10]):
-            label = name
-            sub = f"{count} msgs · {preview[:30]}" if preview else f"{count} msgs"
-            if i == self.cur:
-                pad = max(1, W - 6 - self._dlen(label) - self._dlen(sub))
-                body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
-                            + C_TEXT + label + C_RESET + C_PANEL + " " * pad
-                            + C_MUTED + sub + C_RESET)
+        from voxel.session import list_sessions
+        items = [("__new__",)] + [(n,) for n, _, _, _ in list_sessions()]
+        self.cur = max(0, min(self.cur, len(items) - 1))
+        for i, item in enumerate(items[:10]):
+            name = item[0]
+            if name == "__new__":
+                label = "+ New Chat"
+                sub = "start a fresh conversation"
+                is_new = True
             else:
-                pad = max(1, W - 4 - self._dlen(label) - self._dlen(sub))
-                body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
+                label = name
+                sub = ""
+                is_new = False
+            if i == self.cur:
+                if is_new:
+                    pad = max(1, W - 6 - self._dlen(label) - self._dlen(sub))
+                    body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
+                                + C_GOOD + label + C_RESET + C_PANEL + " " * pad
+                                + C_MUTED + sub + C_RESET)
+                else:
+                    pad = max(1, W - 6 - self._dlen(label) - self._dlen(sub))
+                    body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
+                                + C_TEXT + label + C_RESET + C_PANEL + " " * pad
+                                + C_MUTED + sub + C_RESET)
+            else:
+                if is_new:
+                    pad = max(1, W - 4 - self._dlen(label) - self._dlen(sub))
+                    body.append("    " + C_GOOD + C_DIM + label + " " * pad + sub + C_RESET)
+                else:
+                    pad = max(1, W - 4 - self._dlen(label) - self._dlen(sub))
+                    body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
         if not items:
             body.append("    " + C_DIM + "No sessions yet — type to start" + C_RESET)
         body.append("")
@@ -963,7 +982,9 @@ def _key_home(self, k, agent):
         if k == "/":
             self.cmd_pick = True
             self.cmd_idx = 0
-        self.open_session("__new__", agent)
+            self.redraw()
+        else:
+            self.open_session("__new__", agent)
     else:
         self.redraw()
 
@@ -1003,7 +1024,7 @@ def _key_chat(self, k, agent):
             self.hist.append(text)
             self.hidx = len(self.hist)
             self.buf = ""
-            response = agent.send(text, self)
+            response = agent.run(text)
             if response:
                 self.notice("SYS", response[:200])
             self.redraw()
