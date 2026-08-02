@@ -1447,19 +1447,14 @@ class UI:
         if self.palette:
             return "  " + C_MUTED + "↑/↓ Select · Enter Run · Esc Close" + C_RESET
         if self.streaming:
-            p = SPINNER.index(self.spin) % 12 if self.spin in SPINNER else 0
-            # v4: bar 2-3s e full hobe (elapsed time based)
-            progress = min(100, int((time.time() - self._stream_start) / 0.025))
-            filled = progress // 8
-            bar = "█" * filled + "░" * (12 - filled)
+            # v4: loading bar removed — simple spinner + counter
             speed_info = ""
             if self._stream_tokens > 0:
                 elapsed = time.time() - self._stream_start
                 speed = self._stream_tokens / elapsed if elapsed > 0 else 0
                 if speed > 0:
                     speed_info = f" · ~{self._stream_tokens} tok · {speed:.0f}/s"
-            return ("  " + C_ACC + self.spin + C_RESET + " " + C_ACC + bar + C_RESET
-                    + " " + C_MUTED + f"{progress}%" + C_RESET
+            return ("  " + C_ACC + self.spin + C_RESET + "  " + C_MUTED + "Thinking…" + C_RESET
                     + "  " + C_MUTED + "[Esc] Interrupt" + speed_info + C_RESET)
         if self.route == "home":
             return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
@@ -1607,7 +1602,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.1 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.2 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1731,6 +1726,16 @@ class UI:
                             body.append("    " + C_TEXT + ln + C_RESET)
                 if speed > 0:
                     body.append("    " + C_MUTED + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
+            elif not self._acc and not self.pending:
+                # v4: loading screen — model thinking, ekhono kono content asheni
+                box_w = min(34, W - 10)
+                pad1 = max(1, (W - box_w) // 2)
+                body.append("")
+                body.append(" " * pad1 + C_ACC + "┌" + "─" * (box_w - 2) + "┐" + C_RESET)
+                ttl = self.spin + " Thinking…"
+                body.append(" " * pad1 + C_ACC + "│" + C_RESET + C_MUTED + ttl.ljust(box_w - 2) + C_ACC + "│" + C_RESET)
+                body.append(" " * pad1 + C_ACC + "└" + "─" * (box_w - 2) + "┘" + C_RESET)
+                body.append(" " * pad1 + C_MUTED + "model: " + self.model + C_RESET)
             else:
                 body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
         for label, text in self.notices:
@@ -2495,6 +2500,14 @@ class UI:
             SESSION_TOKENS["in"] += est_tokens(reasoning + content)
             SESSION_TOKENS["out"] += est_tokens(content)
             tools = parse_tools(content)
+            if not tools and not content.strip():
+                # v4: empty reply guard — kono content nei, loop e jamabo na
+                if self.messages and self.messages[-1].get("role") == "assistant":
+                    self.messages.pop()
+                self.notice("SYS", "AI kichu respond koreni — abar try korun")
+                self.status = "empty"
+                self.redraw()
+                return
             self.messages.append({"role": "assistant", "content": content, "time": time.time(), "model": used_model})
             if getattr(self, "_think_secs", None) is not None:
                 self.messages[-1]["think"] = self._think_secs
@@ -2560,7 +2573,14 @@ class UI:
                 if round_no == MAX_TOOL_ROUNDS - 1:
                     results.append("(max tool rounds reached, ekhane shesh koro)")
                 self.redraw()
-            self.messages.append({"role": "user", "content": "\n".join(results), "time": time.time()})
+            results_txt = "\n".join(r for r in results if r.strip())
+            if not results_txt.strip():
+                # v4: tool results khaali — empty user message append korbo na
+                self.notice("SYS", "Tool results khaali chilo — loop stop")
+                self.status = "done"
+                self.redraw()
+                return
+            self.messages.append({"role": "user", "content": results_txt, "time": time.time()})
         else:
             self.notice("SYS", "Max tool rounds — /new diye fresh koro.")
         if self.loaded_name and len(self.messages) > 1:
@@ -2609,7 +2629,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.1" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.2" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
