@@ -936,6 +936,15 @@ class UI:
         self._palette_prev = -1
         self._palette_t = 0.0
         self.sess_expand = None
+        self.anim = True
+        self._entrance = None
+        self._sec_anim = None
+        self._suck = 0.0
+        self._render_hist = []
+        self._stream_speeds = []
+        self._boot_t = time.time()
+        self._last_reply_dt = 0.0
+        self.timing_panel = False
 
     def anim_header(self, new_title, W):
         """v4 session-switch header animation — typewriter reveal, 7 frames x 40ms."""
@@ -952,6 +961,9 @@ class UI:
 
     def _popup_birth_anim(self):
         """v4: popup birth — 4-frame grow-in (120ms)."""
+        if not self.anim:
+            self.redraw()
+            return
         for f in range(1, 5):
             self._popup_birth = f / 4
             self.redraw()
@@ -961,6 +973,9 @@ class UI:
 
     def _route_transition(self):
         """v4: home<->chat fade — 3 dim frames (105ms)."""
+        if not self.anim:
+            self.redraw()
+            return
         for _ in range(3):
             self._route_fade = time.time()
             self.redraw()
@@ -1005,7 +1020,13 @@ class UI:
             tick += 1
             acc = self._acc
             n = len(acc) - self._revealed
-            if n > 0:
+            if n > 0 and not self.anim:
+                # v4: animations OFF — instant reveal
+                self.pending += acc[self._revealed:]
+                self._revealed = len(acc)
+                self.redraw()
+                time.sleep(0.05)
+            elif n > 0:
                 idx = self._revealed
                 limit, delay = TYPE_PROFILE[0]
                 for lm, d in TYPE_PROFILE:
@@ -1021,7 +1042,7 @@ class UI:
                 if chunk and chunk[-1] in ".!?।।":
                     time.sleep(PUNCT_PAUSE)
             elif not self.pending:
-                self.spin = SPINNER[tick % len(SPINNER)]
+                self.spin = SPINNER[tick % len(SPINNER)] if self.anim else SPINNER[0]
                 self.redraw()
                 time.sleep(0.12)
             else:
@@ -1131,6 +1152,20 @@ class UI:
         elif tail:
             out.append(self.card_row(C_MUTED, "… " + str(len(d["lines"]) - max_show) + " more", W))
         return out
+
+    def _sec_toggle_anim(self, key, expand):
+        """v4: section line-by-line expand/collapse — 6 frames x 30ms."""
+        if not self.anim:
+            self.redraw()
+            return
+        steps = 6
+        for f in range(1, steps + 1):
+            frac = f / steps if expand else 1.0 - f / steps + 1 / steps
+            self._sec_anim = (key, frac)
+            self.redraw()
+            time.sleep(0.03)
+        self._sec_anim = None
+        self.redraw()
 
     def toggle_diff_expand(self):
         """Enter on empty buf: expand/collapse the most recent big diff card / summary section."""
@@ -1287,7 +1322,11 @@ class UI:
             if focused:
                 header += "  " + C_MUTED + "◄──" + C_RESET
             out.append("    " + header)
-            for ln in wrap_text(c_text, max(20, W - 8)):
+            w_lines = wrap_text(c_text, max(20, W - 8))
+            # v4: line-by-line expand/collapse anim slice
+            if self._sec_anim and self._sec_anim[0] == key:
+                w_lines = w_lines[:max(1, int(len(w_lines) * self._sec_anim[1]))]
+            for ln in w_lines:
                 out.append("      " + self._status_line(ln, W))
         else:
             if focused:
@@ -1352,6 +1391,9 @@ class UI:
         """opencode-style input box, border color = mode (plan green / build blue)."""
         color = C_PLAN if self.mode == "plan" else C_BUILD
         disp = self.buf
+        # v4: send suck-in — trailing chars collapse into the prompt arrow
+        if self._suck > 0 and disp:
+            disp = disp[:max(1, int(len(disp) * (1 - self._suck)))]
         # v4: cursor blink 530/530, typing e freeze, 1s por resume
         if time.time() - self._last_key < 1.0:
             self._cursor_on = True
@@ -1565,7 +1607,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.4 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.0 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -1644,11 +1686,35 @@ class UI:
                 # v4: tool results hidden — Commands Executed section e fold
                 continue
             if role == "user":
-                body += self.card(C_USER, text, W, time_prefix=time_str)
+                # v4: user card transparent — no bg panel, bright text + ❯
+                ulines = wrap_text(text, max(20, W - 6))
+                for i, ln in enumerate(ulines):
+                    if i == 0:
+                        body.append("  " + C_DIM + time_str + " " + C_USER + "❯ " + C_RESET + C_TEXT + ln + C_RESET)
+                    else:
+                        body.append("    " + C_TEXT + ln + C_RESET)
             else:
-                body += self.assistant_block(msg.get("model") or self.model, text, W,
-                                             think=msg.get("think"), reasoning=msg.get("reasoning", ""),
-                                             time_prefix=time_str, msg_idx=mi + 1)
+                alines = self.assistant_block(msg.get("model") or self.model, text, W,
+                                              think=msg.get("think"), reasoning=msg.get("reasoning", ""),
+                                              time_prefix=time_str, msg_idx=mi + 1)
+                # v4: card entrance — last reply grows in
+                if self._entrance and self._entrance[0] == mi:
+                    alines = alines[:max(1, int(len(alines) * self._entrance[1]))]
+                body += alines
+        if self.timing_panel:
+            # v4: central timing table
+            hist = self._render_hist[-10:]
+            avg_render = sum(hist) / max(1, len(hist))
+            avg_speed = sum(self._stream_speeds[-5:]) / max(1, len(self._stream_speeds[-5:]))
+            up = time.time() - self._boot_t
+            body += self.card(C_ACC, C_BOLD + "⏱ Timing — Ctrl+T" + C_RESET, W)
+            for rtext in (f"  session uptime: {int(up // 60)}m {int(up % 60)}s",
+                          f"  avg render: {avg_render:.1f}ms",
+                          f"  stream avg: {avg_speed:.0f} tok/s",
+                          f"  last reply: {self._last_reply_dt}",
+                          f"  tokens: {SESSION_TOKENS['in'] + SESSION_TOKENS['out']}",
+                          f"  animations: {'ON (Ctrl+A off)' if self.anim else 'OFF (Ctrl+A on)'}"):
+                body.append(self.card_row(C_MUTED, rtext, W))
         if self.streaming:
             elapsed = time.time() - self._stream_start
             speed = self._stream_tokens / elapsed if elapsed > 0 and self._stream_tokens > 0 else 0
@@ -1745,6 +1811,7 @@ class UI:
     def redraw(self):
         if self.plain:
             return
+        _r0 = time.time()
         # v4: notice auto-dismiss after 3s
         if self.notices and time.time() - self._notice_t > 3.0:
             self.notices = []
@@ -1765,6 +1832,10 @@ class UI:
         with self._draw_lock:
             sys.stdout.write("".join(out))
             sys.stdout.flush()
+        # v4: render timing histogram (for timing table)
+        self._render_hist.append((time.time() - _r0) * 1000)
+        if len(self._render_hist) > 20:
+            self._render_hist.pop(0)
 
     def adaptive(self, W, H):
         """v4 adaptive layout — portrait/landscape state (spec section 15)."""
@@ -1969,6 +2040,13 @@ class UI:
                 return
             text = self.buf
             if text.strip():
+                # v4: send suck-in — text collapses into the prompt (150ms)
+                if self.anim:
+                    for f in range(1, 7):
+                        self._suck = f / 6
+                        self.redraw()
+                        time.sleep(0.025)
+                    self._suck = 0.0
                 self.hist.append(text)
                 self.hidx = len(self.hist)
                 self.buf = ""
@@ -1976,9 +2054,10 @@ class UI:
             elif self.sec_focus:
                 if self.sec_focus in self.expand_diffs:
                     self.expand_diffs.discard(self.sec_focus)
+                    self._sec_toggle_anim(self.sec_focus, False)
                 else:
                     self.expand_diffs.add(self.sec_focus)
-                self.redraw()
+                    self._sec_toggle_anim(self.sec_focus, True)
             elif self.toggle_diff_expand():
                 self.redraw()
             else:
@@ -2002,6 +2081,12 @@ class UI:
             self.redraw()
         elif k == "CTRL-Z":
             self.undo_last()
+        elif k == "CTRL-T":
+            self.timing_panel = not self.timing_panel
+            self.redraw()
+        elif k == "CTRL-A":
+            self.anim = not self.anim
+            self.notice("SYS", "Animations " + ("ON" if self.anim else "OFF") + " (Ctrl+A)")
         elif k == "ESC":
             if self.renaming:
                 self.renaming = False
@@ -2420,7 +2505,22 @@ class UI:
                     self.messages[-1]["content"] += ("\n\n**Summary:**\n▸ Commands Executed (collapsed)\n"
                                                      + "\n".join(cmd_log))
                 self.status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
+            self._last_reply_dt = dt
+            spd = est_tokens(content) / max(0.1, time.time() - t0)
+            self._stream_speeds.append(spd)
+            if len(self._stream_speeds) > 10:
+                self._stream_speeds.pop(0)
+                self._last_reply_dt = dt
                 self.redraw()
+                # v4: card entrance — reply grows in 8 frames x 30ms
+                if self.anim:
+                    mi = len(self.messages) - 2
+                    for f in range(1, 9):
+                        self._entrance = (mi, f / 8)
+                        self.redraw()
+                        time.sleep(0.03)
+                    self._entrance = None
+                    self.redraw()
                 break
             results = []
             for name, attrs, tcontent in tools:
@@ -2509,7 +2609,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.4" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.0" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
