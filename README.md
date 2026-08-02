@@ -2,26 +2,26 @@
 
 AI Coding Assistant CLI for Termux. Lightweight, fast, and built for Android development environments.
 
-## Features
-
-- Interactive chat with streaming responses
-- Multiple AI providers (OpenAI, Anthropic, Ollama, Gemini)
-- File system tools (read, write, list, glob, grep)
-- Terminal command execution
-- Git integration (status, log, diff, commit)
-- LSP diagnostics
-- Session management
-- Memory bank
-- Auto-compact for long conversations
-- Permission system
-- Agent modes (code, plan, ask, debug, review)
-- Works offline with local models (Ollama)
-- Termux-specific path handling
-
-## Installation (Termux)
+## One-Click Install (Termux)
 
 ```bash
-# Clone or copy VOXEL to your device
+curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-v2/master/install.sh | bash
+```
+
+Then restart Termux or run `source ~/.bashrc`, and start with:
+
+```bash
+voxel chat
+```
+
+**Default config (pre-installed):**
+- Model: `deepseek-v4-flash-free`
+- Provider: `https://opencode.ai/zen/v1`
+- API key: built-in (no setup needed)
+
+## Installation (Manual)
+
+```bash
 pkg update -y
 pkg install -y python python-pip git termux-api
 
@@ -35,11 +35,11 @@ python -m voxel.cli chat
 ## Usage
 
 ```bash
-# Configure
-voxel setup --provider openai --api-key YOUR_KEY --model gpt-4o-mini
-
-# Interactive chat
+# Start interactive chat (default: DeepSeek V4 Flash Free, no API key needed)
 voxel chat
+
+# Configure custom provider
+voxel setup --provider openai --api-key YOUR_KEY --model gpt-4o-mini
 
 # Single prompt
 voxel run "Write a hello world in Python"
