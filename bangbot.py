@@ -110,21 +110,22 @@ C_RESET = "\033[0m"
 CLEAR = "\x1b[2J\x1b[H"
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # 10-frame braille spinner (v4 spec)
 
-# v4 semantic palette (spec: ANSI 256 + truecolor bg)
+# v5 semantic palette — Claude Code / OpenCode minimal aesthetic
 C_BG = "\x1b[48;2;10;10;10m"
-C_PANEL = "\x1b[48;2;22;22;22m"
-C_BORDER = "\033[38;5;240m"         # box borders
-C_TEXT = "\033[38;5;255m"           # main reply body — sole BRIGHT white
-C_MUTED = "\033[38;5;245m"          # DIM gray — headers/labels/meta
-C_GRAY = "\033[38;5;245m"           # section content — DIM gray
-C_ACC = "\033[38;5;141m"            # BRAND #a78bfa (AI accent, logo)
+C_PANEL = ""                         # removed panel bg — clean terminal look
+C_BORDER = "\033[38;5;238m"         # subtle box borders (darker)
+C_TEXT = "\033[38;5;255m"           # main reply body — bright white
+C_MUTED = "\033[38;5;244m"          # DIM gray — headers/labels/meta
+C_GRAY = "\033[38;5;244m"           # section content — DIM gray
+C_ACC = "\033[38;5;141m"            # BRAND #a78bfa (AI accent — OpenCode purple)
 C_USER = "\033[38;5;86m"            # USER green #34d399
-C_GOOD = "\033[38;5;86m"            # ● info green
+C_GOOD = "\033[38;5;86m"            # ✓ info green
 C_ERRC = "\033[38;5;203m"           # ✗ error red #f87171
 C_WARN = "\033[38;5;220m"           # ⚠ warning yellow #fbbf24
-C_PLAN = "\033[38;5;86m"            # plan mode = USER green
+C_PLAN = "\033[38;5;86m"            # plan mode = green
 C_BUILD = "\033[38;5;75m"           # build mode blue #60a5fa
 C_HIGHLIGHT = "\033[1m"             # bold headers inside body
+C_SEP = "\033[38;5;237m"            # separator line color
 CSI_FINAL_CHARS = "@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~`"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x1b\[[0-9;]*[A-Za-z]")
 
@@ -158,6 +159,9 @@ SAFE_GLYPHS = {
     "▏": "|", "▎": "|", "▌": "|", "▋": "|", "▊": "|", "▉": "|",
     "⣾": "/", "⣽": "/", "⣻": "/", "⢿": "/", "⡿": "/", "⣟": "/",
     "⣯": "/", "⣷": "/", "⚡": "!", "⛔": "!", "⏳": "!",
+    "◆": "*", "◦": ".", "╔": "+", "╗": "+", "╚": "+", "╝": "+",
+    "╠": "+", "╣": "+", "╦": "+", "╩": "+", "═": "-", "║": "|",
+    "╭": "+", "╮": "+", "╯": "+", "╰": "+",
 }
 SAFE_RE = None
 
@@ -1138,12 +1142,11 @@ class UI:
         if dlen(title) + dlen(right) > avail:
             title = short(title, max(4, avail - dlen(right)))
         pad = max(1, W - 4 - dlen(title) - dlen(right))
-        return ("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD + C_TEXT + title
-                + C_RESET + C_PANEL + " " * pad + C_MUTED + right + C_RESET)
+        return ("  " + C_ACC + "◆" + C_RESET + " " + C_BOLD + C_TEXT + title
+                + C_RESET + " " * pad + C_MUTED + right + C_RESET)
 
     def card_row(self, color, text, W):
-        pad = max(0, W - 6 - dlen(text))
-        return "  " + color + "│" + C_RESET + C_PANEL + " " + text + " " * pad + C_RESET
+        return "  " + color + "▎" + C_RESET + " " + text
 
     def box_top(self, color, title, W, lead=2, bw=None):
         bw = bw or (W - lead)
@@ -1409,18 +1412,19 @@ class UI:
         if not inner:
             self._sec_keys = sec_keys
             return outside
-        box = [self.box_top(C_ACC, "VOXEL", W)]
+        # Clean left-border card — Claude Code / OpenCode aesthetic
+        card = []
+        # Header line: ◆  model-tag  time
+        meta_parts = [C_MUTED + self._short_tag(model) + C_RESET]
         if time_prefix:
-            box.append(self.box_row(C_ACC, C_DIM + time_prefix + C_RESET, W))
-            box.append(self.box_row(C_ACC, "", W))
+            meta_parts.insert(0, C_MUTED + time_prefix + C_RESET)
+        card.append("  " + C_ACC + "◆" + C_RESET + "  " + "  ".join(meta_parts))
+        # Content rows with thin left accent border
         for ln in inner:
-            box.append(self.box_row(C_ACC, ln, W))
-        box.append(self.box_row(C_ACC, "", W))
-        tag = C_DIM + self._short_tag(model) + C_RESET
-        box.append(self.box_row_right(C_ACC, tag, W))
-        box.append(self.box_bottom(C_ACC, W))
+            card.append("  " + C_ACC + "▎" + C_RESET + " " + ln)
+        card.append("  " + C_ACC + "▎" + C_RESET)   # closing border spacer
         self._sec_keys = sec_keys
-        return outside + box
+        return outside + card
 
     def _short_tag(self, model):
         """deepseek-v4-flash-free -> ds-v4 (compact model tag, box-er niche-right)."""
@@ -1525,11 +1529,11 @@ class UI:
         ]
 
     def mode_chip(self):
-        # v4: mode switch e brief reverse-video flash (cross-fade)
+        # mode switch e brief reverse-video flash (cross-fade)
         if self.mode == "plan":
-            chip = C_PLAN + "● plan" + C_RESET
+            chip = C_PLAN + "◆ plan" + C_RESET
         else:
-            chip = C_BUILD + "● build" + C_RESET
+            chip = C_BUILD + "◆ build" + C_RESET
         age = time.time() - self._mode_flash
         if age < 0.15:
             chip = "\x1b[7m" + C_BOLD + chip + C_RESET
@@ -1543,19 +1547,19 @@ class UI:
         if self.palette:
             return "  " + C_MUTED + "↑/↓ Select · Enter Run · Esc Close" + C_RESET
         if self.streaming:
-            # v4: loading bar removed — simple spinner + counter
             speed_info = ""
             if self._stream_tokens > 0:
                 elapsed = time.time() - self._stream_start
                 speed = self._stream_tokens / elapsed if elapsed > 0 else 0
                 if speed > 0:
-                    speed_info = f" · ~{self._stream_tokens} tok · {speed:.0f}/s"
-            return ("  " + C_ACC + self.spin + C_RESET + "  " + C_MUTED + "Thinking…" + C_RESET
-                    + "  " + C_MUTED + "[Esc] Interrupt" + speed_info + C_RESET)
+                    speed_info = f"  ~{self._stream_tokens} tok  ·  {speed:.0f}/s"
+            return ("  " + C_ACC + self.spin + C_RESET + "  " + C_MUTED + "Generating…" + C_RESET
+                    + C_DIM + speed_info + C_RESET
+                    + "  " + C_MUTED + "[Esc] stop" + C_RESET)
         if getattr(self, "_tool_progress", None):
             name, arg, _ = self._tool_progress
-            return ("  " + C_ACC + "⏳" + C_RESET + "  " + C_MUTED + f"{name}: {truncate(arg, 30)}" + C_RESET
-                    + "  " + C_MUTED + "[Esc] Interrupt · [Ctrl+P] Commands" + C_RESET)
+            return ("  " + C_ACC + "◆" + C_RESET + "  " + C_MUTED + f"{name}  {truncate(arg, 30)}" + C_RESET
+                    + "  " + C_DIM + "[Esc] stop  [Ctrl+P] menu" + C_RESET)
         if self.route == "home":
             return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
         if self.scroll_off > 0:
@@ -1667,7 +1671,7 @@ class UI:
 
     def model_pick_card(self, W):
         out = []
-        out += self.card(C_ACC, C_BOLD + "🤖 Models — select kore Enter (Esc close)" + C_RESET, W)
+        out += self.card(C_ACC, C_BOLD + "◆  Models — ↑/↓ select · Enter confirm · Esc close" + C_RESET, W)
         current = self.model
         for i, m in enumerate(FREE_MODELS):
             label = m
@@ -1698,52 +1702,55 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.8.4 · " + self.model, W)]
+        sep = "  " + C_SEP + "─" * max(0, W - 4) + C_RESET
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  " + self.short_model(), W), sep]
         body = [""]
-        # ASCII art logo (hidden on tiny rows — portrait compact)
+        # Logo / wordmark
         if self.tiny_rows:
-            body.append("  " + C_BOLD + C_TEXT + "VOXEL AI" + C_RESET)
+            body.append("  " + C_ACC + "◆" + C_RESET + "  " + C_BOLD + C_TEXT + "VOXEL AI" + C_RESET
+                        + "  " + C_MUTED + "v3.8.4" + C_RESET)
         else:
             logo = [
-                "  " + C_BOLD + C_TEXT + "██    ██  ██████  ██   ██ ███████ ██" + C_RESET,
-                "  " + C_BOLD + C_TEXT + "██    ██ ██    ██  ██ ██  ██      ██" + C_RESET,
-                "  " + C_BOLD + C_TEXT + "██    ██ ██    ██   ███   █████   ██" + C_RESET,
-                "  " + C_BOLD + C_TEXT + " ██  ██  ██    ██  ██ ██  ██      ██" + C_RESET,
-                "  " + C_BOLD + C_TEXT + "  ████    ██████  ██   ██ ███████ ███████" + C_RESET,
+                "  " + C_ACC + "██╗   ██╗ ██████╗ ██╗  ██╗███████╗██╗" + C_RESET,
+                "  " + C_ACC + "██║   ██║██╔═══██╗╚██╗██╔╝██╔════╝██║" + C_RESET,
+                "  " + C_ACC + "╚██╗ ██╔╝██║   ██║ ╚███╔╝ █████╗  ██║" + C_RESET,
+                "  " + C_ACC + " ╚████╔╝ ██║   ██║ ██╔██╗ ██╔══╝  ██║" + C_RESET,
+                "  " + C_ACC + "  ╚██╔╝  ╚██████╔╝██╔╝ ██╗███████╗███████╗" + C_RESET,
+                "  " + C_ACC + "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝" + C_RESET,
+                "  " + C_MUTED + "  Free AI agent  ·  Termux  ·  OpenCode Zen models  ·  v3.8.4" + C_RESET,
             ]
             body.extend(logo)
         body.append("")
+        body.append(sep)
+        body.append("")
         # Sessions list
-        body.append("  " + C_MUTED + "Sessions" + C_RESET)
+        body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
         items = session_list()
         self.cur = max(0, min(self.cur, len(items) - 1))
         for i, (name, t, count, preview) in enumerate(items[:10]):
             label = name
-            sub = f"{count} msgs · {preview[:30]}" if preview else f"{count} msgs"
+            sub = f"{count} msgs  ·  {rel_time(t)}"
             if i == self.cur:
-                pad = max(1, W - 6 - dlen(label) - dlen(sub))
-                body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
-                            + C_TEXT + label + C_RESET + C_PANEL + " " * pad
-                            + C_MUTED + sub + C_RESET)
+                pad = max(1, W - 5 - dlen(label) - dlen(sub))
+                body.append("  " + C_ACC + "◆" + C_RESET + " " + C_BOLD + C_TEXT + label
+                            + C_RESET + " " * pad + C_MUTED + sub + C_RESET)
             else:
-                pad = max(1, W - 4 - dlen(label) - dlen(sub))
-                body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
+                pad = max(1, W - 5 - dlen(label) - dlen(sub))
+                body.append("  " + C_DIM + "○" + C_RESET + " " + C_MUTED + label
+                            + " " * pad + C_DIM + sub + C_RESET)
         if not items:
-            body.append("    " + C_DIM + "No sessions yet — type to start" + C_RESET)
+            body.append("  " + C_DIM + "○  No sessions yet — type to start a new chat" + C_RESET)
         body.append("")
         if self.palette:
             body += self.palette_card(W)
         elif self.model_pick:
             body += self.model_pick_card(W)
-        else:
-            body.append("  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Ctrl+P = commands" + C_RESET)
-        # Tip section
-        body.append("")
-        body.append("  " + C_WARN + "● Tip" + C_RESET + " " + C_MUTED + "Type /help for commands · /models to change model" + C_RESET)
+        # Tip hint
+        body.append("  " + C_DIM + "◦  /help commands  ·  /models change AI  ·  Tab Plan/Build" + C_RESET)
         for label, text in self.notices:
             body += self.notice_card(label, text, W)
-        body_max = max(1, H - 3)
+        body_max = max(1, H - 4)  # 2 top lines (hdr+sep) + prompt + footer = 4
         if len(body) > body_max:
             body = body[-body_max:]
         else:
@@ -1757,17 +1764,18 @@ class UI:
         tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
         title = self._hdr_override or self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
         msg_count = len([m for m in self.messages if m.get("role") != "system"])
+        sep = "  " + C_SEP + "─" * max(0, W - 4) + C_RESET
         if self.compact:
-            right = "●" + ("P" if self.mode == "plan" else "B") + "·" + self.short_model() \
-                    + "·" + self.fmt_tok(tok) + "·$0"
+            right = ("P" if self.mode == "plan" else "B") + "·" + self.short_model() \
+                    + "·" + self.fmt_tok(tok)
             if msg_count > 0:
                 title += f"·{msg_count}m"
-            lines = [self.hdr("# " + title, right, W)]
+            lines = [self.hdr("# " + title, right, W), sep]
         else:
-            right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0"
+            right = f"{self.mode_chip()}  {self.model}  ·  ~{tok} tok"
             if msg_count > 0:
                 title += f" · {msg_count} msgs"
-            lines = [self.hdr("# " + title, right, W)]
+            lines = [self.hdr("# " + title, right, W), sep]
         body = []
         for mi, msg in enumerate(self.messages[1:]):
             role, text = msg["role"], msg["content"]
@@ -1819,20 +1827,22 @@ class UI:
             elapsed = time.time() - self._stream_start
             speed = self._stream_tokens / elapsed if elapsed > 0 and self._stream_tokens > 0 else 0
             if self.pending:
+                # Show ◆ header then left-border content while streaming
+                body.append("  " + C_ACC + "◆" + C_RESET + "  " + C_MUTED + self._short_tag(self.model) + C_RESET)
                 body_only = self._body_only(self.pending)
-                plines = wrap_text(body_only, max(20, W - 6))
+                plines = wrap_text(body_only, max(20, W - 8))
                 if plines:
                     while plines and plines[-1] == "":
                         plines.pop()
                     for i, ln in enumerate(plines):
                         if i == len(plines) - 1:
-                            body.append("    " + C_TEXT + ln + C_RESET + C_ACC + "▍" + C_RESET)
+                            body.append("  " + C_ACC + "▎" + C_RESET + " " + C_TEXT + ln + C_RESET + C_ACC + "▍" + C_RESET)
                         else:
-                            body.append("    " + C_TEXT + ln + C_RESET)
+                            body.append("  " + C_ACC + "▎" + C_RESET + " " + C_TEXT + ln + C_RESET)
                 if speed > 0:
-                    body.append("    " + C_MUTED + f"~{self._stream_tokens} tok · {speed:.0f} tok/s" + C_RESET)
+                    body.append("  " + C_ACC + "▎" + C_RESET + "  " + C_MUTED + f"~{self._stream_tokens} tok  ·  {speed:.0f} tok/s" + C_RESET)
             else:
-                body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
+                body.append("  " + C_ACC + "◆" + C_RESET + "  " + C_ACC + self.spin + C_RESET + "  " + C_MUTED + "Thinking…" + C_RESET)
         for label, text in self.notices:
             body += self.notice_card(label, text, W)
         for i, n in enumerate(self.notes):
@@ -1894,7 +1904,7 @@ class UI:
             body += self.model_pick_card(W)
         elif self.cmd_pick:
             body += self.cmd_pick_card(W)
-        body_max = max(1, H - 5)
+        body_max = max(1, H - 6)  # 2 top (hdr+sep) + 3 prompt_box + 1 footer
         if len(body) > body_max:
             max_scroll = len(body) - body_max
             self.scroll_off = max(0, min(self.scroll_off, max_scroll))
@@ -2788,7 +2798,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.8.4" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_ACC + "◆" + C_RESET + "  " + C_BOLD + "VOXEL AI" + C_RESET + "  v3.8.4  ·  " + self.model + "  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
