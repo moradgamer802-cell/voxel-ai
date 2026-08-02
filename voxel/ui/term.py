@@ -411,13 +411,13 @@ class TermUI:
                 outside.append("    " + C_MUTED + sln + C_RESET)
         if not inner:
             return outside
-        box = [self._box_top(C_ACC, "VOXEL", W)]
+        box = [self._box_top(C_MUTED, "VOXEL", W)]
         for ln in inner:
-            box.append(self._box_row(C_ACC, ln, W))
-        box.append(self._box_row(C_ACC, "", W))
+            box.append(self._box_row(C_MUTED, ln, W))
+        box.append(self._box_row(C_MUTED, "", W))
         tag = C_DIM + self._short_tag(model) + C_RESET
-        box.append(self._box_row_right(C_ACC, tag, W))
-        box.append(self._box_bottom(C_ACC, W))
+        box.append(self._box_row_right(C_MUTED, tag, W))
+        box.append(self._box_bottom(C_MUTED, W))
         return outside + box
 
     def _parse_sections(self, text):
