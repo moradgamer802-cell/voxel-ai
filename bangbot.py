@@ -718,6 +718,8 @@ def raw_key():
             return "CTRL-E"
         if ch == "\x12":
             return "CTRL-R"
+        if ch == "\x1a":
+            return "CTRL-Z"
         if ch in ("\x7f", "\x08"):
             return "BACK"
         if ch == "\x1b":
@@ -808,6 +810,8 @@ def raw_key():
             return "CTRL-E"
         if ch == "\x12":
             return "CTRL-R"
+        if ch == "\x1a":
+            return "CTRL-Z"
         if ch in ("\x7f", "\x08"):
             return "BACK"
         if ch == "\t":
@@ -820,11 +824,11 @@ def raw_key():
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/save ", "/load ", "/sessions",
+COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/undo", "/save ", "/load ", "/sessions",
                 "/rm ", "/stats", "/perm", "/root", "/exit"]
 
 PALETTE_CMDS = ["/help", "/new", "/models", "/sessions", "/save", "/load", "/rm",
-                "/perm", "/root", "/stats", "/exit"]
+                "/perm", "/root", "/stats", "/exit", "/undo"]
 NEEDS_ARG = ("/save", "/load", "/rm")
 
 TYPESTEP = 6
@@ -874,6 +878,7 @@ class UI:
         self.resized = False
         self.quitting = False
         self._comp = -1
+        self._undo_msg = None
 
     # ---------- screen ----------
 
@@ -1082,16 +1087,16 @@ class UI:
         """opencode-style input box, border color = mode (plan green / build blue)."""
         color = C_PLAN if self.mode == "plan" else C_BUILD
         disp = self.buf
-        while dlen(disp) > W - 11:
+        while dlen(disp) > W - 12:
             disp = disp[1:]
-        if dlen(disp) > W - 12:
+        if dlen(disp) > W - 13:
             disp = "…" + disp
         if disp:
-            inner = C_TEXT + disp + C_RESET
-            plain = "❯ " + disp
+            inner = C_TEXT + disp + C_RESET + C_ACC + "▍" + C_RESET
+            plain = "❯ " + disp + "▍"
         else:
-            inner = C_MUTED + "Type a message... (or /help)" + C_RESET
-            plain = "❯ " + "Type a message... (or /help)"
+            inner = C_MUTED + "Type a message... (or /help)" + C_RESET + C_ACC + "▍" + C_RESET
+            plain = "❯ " + "Type a message... (or /help)" + "▍"
         pad = max(1, W - 6 - dlen(plain))
         return [
             "  " + color + "┌" + "─" * (W - 4) + "┐" + C_RESET,
@@ -1133,6 +1138,8 @@ class UI:
         else:
             parts.append("[Tab] Mode")
         parts.append("[Esc] Home")
+        if self._undo_msg:
+            parts.append("[Ctrl+Z] Undo")
         if self.loaded_name:
             parts.append("[Ctrl+D] Del · [Ctrl+R] Rename")
         if self.auto_approve:
@@ -1243,7 +1250,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.20 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.21 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1408,6 +1415,8 @@ class UI:
         else:
             self.scroll_off = 0
             body += [""] * (body_max - len(body))
+        if self.streaming and self._esc_pending:
+            body.append("  " + C_WARN + "⚠ ESC abar chaple interrupt hobe (Ctrl+C = direct)" + C_RESET)
         lines += body
         lines += self.prompt_box(W)
         lines.append(self.footer_line())
@@ -1610,6 +1619,8 @@ class UI:
             else:
                 self.notice("SYS", "Auto-approve OFF — permissions will ask again")
             self.redraw()
+        elif k == "CTRL-Z":
+            self.undo_last()
         elif k == "ESC":
             if self.renaming:
                 self.renaming = False
@@ -1767,6 +1778,9 @@ class UI:
         if user_input == "/new":
             self.open_session("__new__")
             return True
+        if user_input == "/undo":
+            self.undo_last()
+            return True
         if user_input == "/stats":
             tot = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
             self.notice("STATS", f"input: {SESSION_TOKENS['in']} tok | output: {SESSION_TOKENS['out']} tok | total: {tot} (cost $0)")
@@ -1862,6 +1876,22 @@ class UI:
             return True
         return False
 
+    def undo_last(self):
+        """Revert the last sent message (remove it + AI reply, restore buffer)."""
+        if self.streaming or not self._undo_msg:
+            self.notice("SYS", "Kichu revert korar nei — message pathaobar por Ctrl+Z")
+            return
+        u = self._undo_msg
+        self.messages = self.messages[: u["idx"]]
+        self.buf = u["text"]
+        self.notices = []
+        self.notes = []
+        self._undo_msg = None
+        if u["name"] and len(self.messages) > 1:
+            save_session(u["name"], self.messages)
+        self.notice("SYS", "Message revert — abar edit kore pathate paren")
+        self.redraw()
+
     # ---------- chat flow ----------
 
     def send(self, text):
@@ -1870,6 +1900,7 @@ class UI:
             return
         self.notices = []
         self.notes = []
+        self._undo_msg = {"idx": len(self.messages), "text": text, "name": self.loaded_name}
         self.messages.append({"role": "user", "content": text, "time": time.time()})
         self.status = self.model
         self.redraw()
@@ -2070,7 +2101,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.20" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.21" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
