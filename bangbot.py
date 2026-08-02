@@ -618,6 +618,7 @@ def help_text():
         "  /new             new chat            /sessions    popup session list",
         "  /save [name]     save chat           /load <name> load chat",
         "  /rm <name>       delete session      /stats       token count",
+        "  Session e: Ctrl+D = delete (confirm) · Ctrl+R = rename (Enter save)",
         "  /perm            permission rules    /root        root toggle",
         "  /mode            Plan/Build toggle (Tab o kaj kore)",
         "  /exit            quit",
@@ -688,6 +689,10 @@ def raw_key():
             return "CTRL-C"
         if ch == "\x10":
             return "CTRL-P"
+        if ch == "\x04":
+            return "CTRL-D"
+        if ch == "\x12":
+            return "CTRL-R"
         if ch in ("\x7f", "\x08"):
             return "BACK"
         if ch == "\x1b":
@@ -772,6 +777,10 @@ def raw_key():
             return "CTRL-C"
         if ch == "\x10":
             return "CTRL-P"
+        if ch == "\x04":
+            return "CTRL-D"
+        if ch == "\x12":
+            return "CTRL-R"
         if ch in ("\x7f", "\x08"):
             return "BACK"
         if ch == "\t":
@@ -824,6 +833,7 @@ class UI:
         self.sess_pick = None
         self.sess_idx = 0
         self.expand_diffs = set()
+        self.renaming = False
         self.scroll_off = 0
         self._acc = ""
         self.spin = "⠋"
@@ -1031,12 +1041,16 @@ class UI:
             return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
         if self.scroll_off > 0:
             return "  " + C_MUTED + "[↓ Newer] swipe down / wheel · [Ctrl+P] Commands" + C_RESET
+        if self.renaming:
+            return "  " + C_MUTED + "Name edit kore [Enter] Save · [Esc] Cancel" + C_RESET
         parts = ["[Enter] Send"]
         if self.buf.startswith("/"):
             parts.append("[Tab] Complete")
         else:
             parts.append("[Tab] Plan/Build")
         parts.append("[Esc] Home")
+        if self.loaded_name:
+            parts.append("[Ctrl+D] Del · [Ctrl+R] Rename")
         parts.append("[Ctrl+P]")
         return "  " + C_MUTED + " · ".join(parts) + C_RESET
 
@@ -1075,7 +1089,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.8 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.9 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -1144,8 +1158,8 @@ class UI:
                     body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
             kind, key = self.popup
-            opts = ["Yes", "No", "Always"]
-            opt_colors = [C_GOOD, C_ERRC, C_WARN]
+            opts = ["Yes", "No", "Always"] if kind == "perm" else ["Yes", "No"]
+            opt_colors = [C_GOOD, C_ERRC, C_WARN] if kind == "perm" else [C_GOOD, C_ERRC]
             parts = []
             for i, o in enumerate(opts):
                 if i == self.popup_idx:
@@ -1154,7 +1168,8 @@ class UI:
                     parts.append(opt_colors[i] + o + C_RESET)
             body += self.card(C_ERRC, "⚖ permission: " + kind, W)
             body += self.card(C_ERRC, C_BOLD + key + C_RESET, W)
-            body += self.card(C_ERRC, "←/→ " + "  ".join(parts) + "   Enter ok · q deny", W)
+            hint = "   Enter ok · q deny" if kind == "perm" else "   Enter confirm · Esc cancel"
+            body += self.card(C_ERRC, "←/→ " + "  ".join(parts) + hint, W)
         elif self.palette:
             body += self.palette_card(W)
         elif self.sess_pick:
@@ -1298,6 +1313,9 @@ class UI:
             return
         self.scroll_off = 0
         if k == "ENTER":
+            if self.renaming:
+                self.commit_rename()
+                return
             text = self.buf
             if text.strip():
                 self.hist.append(text)
@@ -1308,11 +1326,22 @@ class UI:
                 self.redraw()
             else:
                 self.redraw()
+        elif k == "CTRL-D":
+            self.delete_session()
+        elif k == "CTRL-R":
+            self.renaming = True
+            self.buf = self.loaded_name or ""
+            self.redraw()
         elif k == "CTRL-P":
             self.palette = True
             self.palette_idx = 0
             self.redraw()
         elif k == "ESC":
+            if self.renaming:
+                self.renaming = False
+                self.buf = ""
+                self.redraw()
+                return
             if len(self.messages) > 1:
                 save_session("last", self.messages)
             self.buf = ""
@@ -1368,6 +1397,77 @@ class UI:
             self.notice("MODE", "Plan mode ON — AI shudhu analyze/plan korbe, kono file/command change korbe na. Build mode e firtte Tab.")
         else:
             self.notice("MODE", "Build mode ON — AI kaj korte parbe (files, commands).")
+        self.redraw()
+
+    # ---------- session delete / rename ----------
+
+    def confirm_popup(self, prompt):
+        """Yes/No confirm popup. Returns True on Yes."""
+        self.popup = ("confirm", prompt)
+        self.popup_idx = 0
+        try:
+            while True:
+                self.redraw()
+                k = raw_key()
+                if k in ("RIGHT", "LEFT"):
+                    self.popup_idx = (self.popup_idx + 1) % 2
+                elif k in ("q", "Q", "CTRL-C", "ESC"):
+                    return False
+                elif k in ("ENTER", ""):
+                    break
+        finally:
+            self.popup = None
+        return self.popup_idx == 0
+
+    def delete_session(self):
+        if not self.loaded_name:
+            self.notice("SYS", "Kono saved session nai — Ctrl+D kichu korbe na.")
+            self.redraw()
+            return
+        name = self.loaded_name
+        if not self.confirm_popup("Delete session '" + name + "'?"):
+            self.notice("SYS", "Delete cancelled.")
+            self.redraw()
+            return
+        try:
+            os.remove(os.path.join(CHATS_DIR, name + ".json"))
+        except OSError:
+            pass
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        SESSION_TOKENS["in"] = SESSION_TOKENS["out"] = 0
+        self.session_perm = {"cmd": set(), "file": set()}
+        self.loaded_name = None
+        self.notices = []
+        self.notes = []
+        self.buf = ""
+        self.status = "ready"
+        self.notice("SYS", "Deleted: " + name)
+        self.redraw()
+
+    def commit_rename(self):
+        name = self.buf.strip()
+        self.renaming = False
+        self.buf = ""
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            self.notice("SYS", "Invalid name: " + (name or "(khali)"))
+            self.redraw()
+            return
+        old = self.loaded_name
+        if old and old != name:
+            src = os.path.join(CHATS_DIR, old + ".json")
+            dst = os.path.join(CHATS_DIR, name + ".json")
+            if not os.path.exists(src):
+                self.notice("SYS", "Session nai: " + old)
+            elif os.path.exists(dst):
+                self.notice("SYS", "Name ta already ache: " + name)
+            else:
+                os.rename(src, dst)
+                self.loaded_name = name
+                self.notice("SYS", "Renamed: " + old + " → " + name)
+        elif not old:
+            save_session(name, self.messages)
+            self.loaded_name = name
+            self.notice("SYS", "Saved as: " + name)
         self.redraw()
 
     # ---------- commands ----------
@@ -1453,6 +1553,7 @@ class UI:
             name = user_input.split(None, 1)[1].strip() if len(user_input.split(None, 1)) > 1 else time.strftime("chat-%Y%m%d-%H%M%S")
             if len(self.messages) > 1:
                 path = save_session(name, self.messages)
+                self.loaded_name = name
                 self.notice("SYS", "Saved: " + path)
             else:
                 self.notice("SYS", "Chat khali, save korar moto kichu nai.")
@@ -1673,7 +1774,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.8" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.9" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
