@@ -94,7 +94,7 @@ C_BOLD = "\033[1m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 CLEAR = "\x1b[2J\x1b[H"
-SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # 10-frame braille spinner (v4 spec)
 
 # v4 semantic palette (spec: ANSI 256 + truecolor bg)
 C_BG = "\x1b[48;2;10;10;10m"
@@ -857,6 +857,9 @@ PALETTE_CMDS = ["/help", "/new", "/models", "/sessions", "/save", "/load", "/rm"
 NEEDS_ARG = ("/save", "/load", "/rm")
 
 TYPESTEP = 6
+# v4 typewriter speed profile: (limit, ms/char) — first 20 fast, next 100 readable, rest scannable
+TYPE_PROFILE = [(20, 0.015), (120, 0.025), (10 ** 9, 0.008)]
+PUNCT_PAUSE = 0.08  # extra pause after punctuation (v4 spec)
 
 
 class UI:
@@ -954,7 +957,7 @@ class UI:
             threading.Thread(target=self.anim_loop, daemon=True).start()
 
     def anim_loop(self):
-        """Spinner + typewriter reveal while streaming."""
+        """v4 spinner + typewriter reveal while streaming (speed profile)."""
         tick = 0
         while not self.quitting:
             if not self.streaming or self.plain:
@@ -964,11 +967,20 @@ class UI:
             acc = self._acc
             n = len(acc) - self._revealed
             if n > 0:
+                idx = self._revealed
+                limit, delay = TYPE_PROFILE[0]
+                for lm, d in TYPE_PROFILE:
+                    if idx < lm:
+                        delay = d
+                        break
                 step = min(TYPESTEP, n)
-                self.pending += acc[self._revealed:self._revealed + step]
+                chunk = acc[self._revealed:self._revealed + step]
+                self.pending += chunk
                 self._revealed += step
                 self.redraw()
-                time.sleep(0.04)
+                time.sleep(delay)
+                if chunk and chunk[-1] in ".!?।।":
+                    time.sleep(PUNCT_PAUSE)
             elif not self.pending:
                 self.spin = SPINNER[tick % len(SPINNER)]
                 self.redraw()
@@ -1316,15 +1328,20 @@ class UI:
         if self.palette:
             return "  " + C_MUTED + "↑/↓ Select · Enter Run · Esc Close" + C_RESET
         if self.streaming:
-            p = SPINNER.index(self.spin) % 9 if self.spin in SPINNER else 0
-            bar = "▰" * p + "⬝" * (8 - p)
+            p = SPINNER.index(self.spin) % 12 if self.spin in SPINNER else 0
+            # v4: bar 2-3s e full hobe (elapsed time based)
+            progress = min(100, int((time.time() - self._stream_start) / 0.025))
+            filled = progress // 8
+            bar = "█" * filled + "░" * (12 - filled)
             speed_info = ""
             if self._stream_tokens > 0:
                 elapsed = time.time() - self._stream_start
                 speed = self._stream_tokens / elapsed if elapsed > 0 else 0
                 if speed > 0:
-                    speed_info = f" · {self._stream_tokens} tok · {speed:.0f}/s"
-            return "  " + C_ACC + bar + C_RESET + "  " + C_MUTED + "[Esc] Interrupt" + speed_info + C_RESET
+                    speed_info = f" · ~{self._stream_tokens} tok · {speed:.0f}/s"
+            return ("  " + C_ACC + self.spin + C_RESET + " " + C_ACC + bar + C_RESET
+                    + " " + C_MUTED + f"{progress}%" + C_RESET
+                    + "  " + C_MUTED + "[Esc] Interrupt" + speed_info + C_RESET)
         if self.route == "home":
             return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
         if self.scroll_off > 0:
@@ -1451,7 +1468,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.1 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.6.2 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -2228,6 +2245,10 @@ class UI:
             if typed and not self.cancel:
                 self.buf = "".join(typed)
             self.redraw()
+            # v4: model meta fade-in + bottom seal — kono sections na thakleo meta line late ashe
+            if not self.cancel and not result.get("err"):
+                time.sleep(0.06)
+                self.redraw()
         err = result.get("err")
         used_model = result.get("model")
         if self.cancel:
@@ -2356,7 +2377,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.1" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.6.2" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
