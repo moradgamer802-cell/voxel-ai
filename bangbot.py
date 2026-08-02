@@ -356,12 +356,14 @@ def ask_permission(kind, key):
             return "deny_once"
 
 
-def check_perm(cfg, category, key, session_perm, prompt=True):
+def check_perm(cfg, category, key, session_perm, prompt=True, auto_approve=False):
     """Returns True if allowed. prompt=False -> read-only ops auto-allow (deny rule thakle block)."""
     mode = perm_rule(cfg, category, key)
     if mode == "deny":
         return False
     if mode == "always" or key in session_perm.get(category, set()):
+        return True
+    if auto_approve:
         return True
     if not prompt:
         return True
@@ -407,14 +409,14 @@ def make_diff_lines(old, new, ctx=2):
     return lines
 
 
-def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
+def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=False):
     """Returns (result_text, diff_info_or_None)."""
     attrs = attrs or {}
     if name == "run":
         wants_root = "root" in attrs and attrs.get("root", "").lower() in ("true", "1", "yes", "")
         root = cfg.get("root", False) or wants_root
         category = "rootcmd" if wants_root else "cmd"
-        if not check_perm(cfg, category, arg, session_perm):
+        if not check_perm(cfg, category, arg, session_perm, auto_approve=auto_approve):
             return "[Tool run: user denied]", None
         if wants_root and not shutil.which("su"):
             return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]", None
@@ -426,7 +428,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ) and shutil.which("su"):
             ui_note(C_YELLOW + "! Permission denied — root diye try korbo?")
-            if check_perm(cfg, "rootcmd", arg, session_perm):
+            if check_perm(cfg, "rootcmd", arg, session_perm, auto_approve=auto_approve):
                 ui_note(C_DIM + "* root diye retry korchi...")
                 code, out, _ = run_command(arg, True)
                 return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]", None
@@ -454,7 +456,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None):
         return f"[Tool read {arg}]\n{truncate(text)}\n[/Tool read]", None
 
     if name == "write":
-        if not check_perm(cfg, "file", arg, session_perm):
+        if not check_perm(cfg, "file", arg, session_perm, auto_approve=auto_approve):
             return "[Tool write: user denied]", None
         try:
             os.makedirs(os.path.dirname(os.path.abspath(arg)), exist_ok=True)
@@ -635,6 +637,7 @@ def help_text():
         "  /perm diye rule set: /perm cmd add 'rm' deny | /perm rootcmd add 'mount' always",
         "  Root dorkar: AI <run root> tag use korbe, permission denied holeo auto-retry",
         "  Permission options: Allow once | Allow session (current chat) | Always (save) | Reject",
+        "  Ctrl+E: toggle auto-approve (all permissions auto-allow, no prompts)",
         "Multi-line: line er seshe '\\' dile continue hobe.",
     ])
 
@@ -711,6 +714,8 @@ def raw_key():
             return "CTRL-P"
         if ch == "\x04":
             return "CTRL-D"
+        if ch == "\x05":
+            return "CTRL-E"
         if ch == "\x12":
             return "CTRL-R"
         if ch in ("\x7f", "\x08"):
@@ -799,6 +804,8 @@ def raw_key():
             return "CTRL-P"
         if ch == "\x04":
             return "CTRL-D"
+        if ch == "\x05":
+            return "CTRL-E"
         if ch == "\x12":
             return "CTRL-R"
         if ch in ("\x7f", "\x08"):
@@ -859,6 +866,7 @@ class UI:
         self.scroll_off = 0
         self._acc = ""
         self._esc_pending = False
+        self.auto_approve = False
         self.spin = "⠋"
         self._draw_lock = threading.Lock()
         self.resized = False
@@ -1092,6 +1100,10 @@ class UI:
         parts.append("[Esc] Home")
         if self.loaded_name:
             parts.append("[Ctrl+D] Del · [Ctrl+R] Rename")
+        if self.auto_approve:
+            parts.append("[Ctrl+E] Auto ✓")
+        else:
+            parts.append("[Ctrl+E] Auto")
         parts.append("[Ctrl+P]")
         return "  " + C_MUTED + " · ".join(parts) + C_RESET
         return "  " + C_MUTED + " · ".join(parts) + C_RESET
@@ -1182,7 +1194,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.13 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.14 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1496,6 +1508,13 @@ class UI:
         elif k == "CTRL-P":
             self.palette = True
             self.palette_idx = 0
+            self.redraw()
+        elif k == "CTRL-E":
+            self.auto_approve = not self.auto_approve
+            if self.auto_approve:
+                self.notice("SYS", "Auto-approve ON — all permissions auto-allow")
+            else:
+                self.notice("SYS", "Auto-approve OFF — permissions will ask again")
             self.redraw()
         elif k == "ESC":
             if self.renaming:
@@ -1890,7 +1909,7 @@ class UI:
                 note_idx = len(self.notes)
                 self.notes.append(C_YELLOW + "⚙ " + name + ": " + truncate(arg, 50) + C_RESET)
                 self.redraw()
-                res, diff_info = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs)
+                res, diff_info = exec_tool(self.cfg, name, arg, tool_content, self.session_perm, attrs, auto_approve=self.auto_approve)
                 results.append(f"[tool {name}: {res}]")
                 code_m = re.search(r"exit=(-?\d+)", res)
                 ok = not code_m or code_m.group(1) == "0"
@@ -1954,7 +1973,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.13" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.14" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
