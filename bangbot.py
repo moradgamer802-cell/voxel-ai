@@ -1240,7 +1240,7 @@ class UI:
         push()
         out = []
         for kind, title, content in chunks:
-            if kind in ("body", "head") and content:
+            if kind in ("body", "head", "sec") and content:
                 keep, metas = [], []
                 for ln in content.split("\n"):
                     if re.match(r"^\s*Location:\s*\S", ln):
@@ -1607,7 +1607,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.0 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.7.1 · " + self.model, W)]
         body = [""]
         # ASCII art logo (hidden on tiny rows — portrait compact)
         if self.tiny_rows:
@@ -2609,7 +2609,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.0" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.7.1" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
