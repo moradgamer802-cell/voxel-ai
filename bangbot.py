@@ -427,7 +427,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
         if not check_perm(cfg, "cmd", arg, session_perm, auto_approve=auto_approve):
             return "[Tool run: user denied]", None
         ui_note(C_DIM + f"$ {short(arg, 40)}" + C_RESET)
-        code, out, shown = run_command(arg, False)
+        code, out, shown = run_command(storage_path(arg), False)
         if code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
         ):
@@ -435,6 +435,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
         return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]", None
 
     if name == "ls":
+        arg = storage_path(arg)
         if not check_perm(cfg, "file", arg, session_perm, prompt=False):
             return "[Tool ls: user denied]", None
         try:
@@ -445,6 +446,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
         return f"[Tool ls {arg}]\n{truncate(listing)}\n[/Tool ls]", None
 
     if name == "read":
+        arg = storage_path(arg)
         if not check_perm(cfg, "file", arg, session_perm, prompt=False):
             return "[Tool read: user denied]", None
         try:
@@ -456,6 +458,7 @@ def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=Fa
         return f"[Tool read {arg}]\n{truncate(text)}\n[/Tool read]", None
 
     if name == "write":
+        arg = storage_path(arg)
         if not check_perm(cfg, "file", arg, session_perm, auto_approve=auto_approve):
             return "[Tool write: user denied]", None
         try:
