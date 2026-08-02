@@ -1194,16 +1194,16 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.15 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.16 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
-            "  " + C_BOLD + C_TEXT + "██╗   ██╗ ██████╗ ██╗  ██╗ ███████╗ ██╗  █████╗ ██╗" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "╚██╗ ██╔╝██╔═══██╗╚██╗██╔╝ ██╔════╝ ██║ ██╔══██╗╚██╗" + C_RESET,
-            "  " + C_BOLD + C_TEXT + " ╚████╔╝ ██║   ██║ ╚███╔╝  ███████╗ ██║ ███████║ ██║" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "  ╚██╔╝  ██║   ██║ ██╔██╗  ╚════██║ ██║ ██╔══██║ ██║" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "   ██║   ╚██████╔╝██╔╝ ██╗ ███████║ ██║ ██║  ██║██╔╝" + C_RESET,
-            "  " + C_BOLD + C_TEXT + "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚══════╝ ╚═╝ ╚═╝  ╚═╝╚═╝" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "██╗   ██╗ ██████╗ ██╗  ██╗ ███████╗ ██╗" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "╚██╗ ██╔╝██╔═══██╗╚██╗██╔╝ ██╔════╝ ██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + " ╚████╔╝ ██║   ██║ ╚███╔╝  ███████╗ ██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "  ╚██╔╝  ██║   ██║ ██╔██╗  ╚════██║ ██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "   ██║   ╚██████╔╝██╔╝ ██╗ ███████║ ██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚══════╝ ╚═╝" + C_RESET,
         ]
         body.extend(logo)
         body.append("")
@@ -1973,7 +1973,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.15" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.16" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
