@@ -38,6 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 - **Plan/Build mode (`Tab`)** — Tab chaple mode toggle: Plan (green) = AI shudhu analyze/plan kore, kono file/command change na; Build (blue) = full agent. `/mode`, `/plan`, `/build` o kaj kore
 - **Input box** — opencode er moto bordered input box, border color = mode (plan green / build blue)
 - **Smooth streaming** — reply "1ta 1ta" kore typewriter style e ashe (race-free reveal)
+- **`Thought: Xs` meta** — AI thinking shesh hole reply er upore opencode er moto `Thought: 2.9s` / `Thought: 381ms` muted line dekhabe; thinking er somoy clean `⠋ Thinking…` line
 - **`/sessions` popup** — chat theke sessions popup e dekhabe, ↑/↓ select + Enter open (Esc close)
 - **`Ctrl+P` palette** — commands list + `/exit` option (app ber hote)
 - **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai

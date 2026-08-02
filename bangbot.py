@@ -506,6 +506,12 @@ def fmt_duration(sec):
     return f"{sec // 60}m {sec % 60:.0f}s"
 
 
+def fmt_thought(sec):
+    if sec < 1:
+        return f"{int(round(sec * 1000))}ms"
+    return f"{sec:.1f}s"
+
+
 # ---------------- TUI ----------------
 
 def term_size():
@@ -966,8 +972,10 @@ class UI:
                 return True
         return False
 
-    def plain_block(self, model, text, W):
+    def plain_block(self, model, text, W, think=None):
         out = []
+        if think is not None:
+            out.append("    " + C_MUTED + "Thought: " + fmt_thought(think) + C_RESET)
         for ln in wrap_text(text, max(20, W - 6)):
             out.append("    " + ln)
         out.append("    " + C_MUTED + model + C_RESET)
@@ -1067,7 +1075,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.7 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.8 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -1115,7 +1123,7 @@ class UI:
             if role == "user":
                 body += self.card(C_USER, text, W)
             else:
-                body += self.plain_block(self.model, text, W)
+                body += self.plain_block(self.model, text, W, think=msg.get("think"))
         if self.streaming:
             if self.pending:
                 plines = wrap_text(self.pending, max(20, W - 6))
@@ -1125,7 +1133,7 @@ class UI:
                     else:
                         body.append("    " + ln)
             else:
-                body += self.card(C_ACC, C_DIM + " " + self.spin + " Thinking…" + C_RESET, W)
+                body.append("    " + C_MUTED + self.spin + " Thinking…" + C_RESET)
         for label, text in self.notices:
             body += self.card(C_WARN, "[" + label + "] " + text, W)
         for n in self.notes:
@@ -1500,6 +1508,8 @@ class UI:
         def on_chunk(kind, text):
             parts.append((kind, text))
             if kind == "content":
+                if self._think_secs is None:
+                    self._think_secs = time.time() - self._think_start
                 self._acc += text
 
         def worker():
@@ -1511,6 +1521,8 @@ class UI:
         self.streaming = True
         self.cancel = False
         self._acc = ""
+        self._think_start = time.time()
+        self._think_secs = None
         self._revealed = 0
         self.pending = ""
         typed = []
@@ -1575,6 +1587,8 @@ class UI:
             SESSION_TOKENS["out"] += est_tokens(content)
             tools = parse_tools(content)
             self.messages.append({"role": "assistant", "content": content})
+            if getattr(self, "_think_secs", None) is not None:
+                self.messages[-1]["think"] = self._think_secs
             if not tools:
                 self.status = f"{used_model} | {dt} | tok ~{SESSION_TOKENS['in'] + SESSION_TOKENS['out']}"
                 self.redraw()
@@ -1659,7 +1673,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.7" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.8" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
