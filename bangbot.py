@@ -339,19 +339,21 @@ def ask_permission(kind, key):
     if ui is not None and not ui.plain:
         return ui.perm_popup(kind, key)
     print()
-    print("  " + C_YELLOW + f"⚖ permission: {kind}" + C_RESET)
-    print("  " + C_BOLD + key + C_RESET)
+    print("  " + C_WARN + "⚠ Permission required" + C_RESET)
+    print("  " + C_DIM + " - Access " + C_BOLD + C_TEXT + key + C_RESET)
     while True:
         try:
-            ans = input("  > 1=Yes 2=No 3=Always (Enter=1): ").strip().lower()
+            ans = input("  > 1=Allow once  2=Allow session  3=Always  4=Reject (Enter=1): ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             return "deny_once"
         if ans in ("1", "y", "yes", ""):
             return "allow_once"
-        if ans in ("2", "n", "no"):
-            return "deny_once"
+        if ans in ("2", "s", "session"):
+            return "allow_session"
         if ans in ("3", "a", "always"):
             return "always"
+        if ans in ("4", "n", "no"):
+            return "deny_once"
 
 
 def check_perm(cfg, category, key, session_perm, prompt=True):
@@ -632,6 +634,7 @@ def help_text():
         "  run/write: arrow prompt (←→ Yes/No/Always, Enter confirm)",
         "  /perm diye rule set: /perm cmd add 'rm' deny | /perm rootcmd add 'mount' always",
         "  Root dorkar: AI <run root> tag use korbe, permission denied holeo auto-retry",
+        "  Permission options: Allow once | Allow session (current chat) | Always (save) | Reject",
         "Multi-line: line er seshe '\\' dile continue hobe.",
     ])
 
@@ -1089,7 +1092,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.9 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.10 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -1158,18 +1161,25 @@ class UI:
                     body.append("  " + C_DIM + ln + C_RESET)
         if self.popup:
             kind, key = self.popup
-            opts = ["Yes", "No", "Always"] if kind == "perm" else ["Yes", "No"]
-            opt_colors = [C_GOOD, C_ERRC, C_WARN] if kind == "perm" else [C_GOOD, C_ERRC]
+            if kind == "perm":
+                opts = ["Allow once", "Allow session", "Always", "Reject"]
+                opt_colors = [C_GOOD, C_ACC, C_WARN, C_ERRC]
+            else:
+                opts = ["Yes", "No"]
+                opt_colors = [C_GOOD, C_ERRC]
             parts = []
             for i, o in enumerate(opts):
                 if i == self.popup_idx:
                     parts.append(C_BOLD + "\x1b[7m" + opt_colors[i] + " " + o + " " + C_RESET)
                 else:
                     parts.append(opt_colors[i] + o + C_RESET)
-            body += self.card(C_ERRC, "⚖ permission: " + kind, W)
-            body += self.card(C_ERRC, C_BOLD + key + C_RESET, W)
-            hint = "   Enter ok · q deny" if kind == "perm" else "   Enter confirm · Esc cancel"
-            body += self.card(C_ERRC, "←/→ " + "  ".join(parts) + hint, W)
+            body += self.card(C_ERRC, C_WARN + "⚠ Permission required" + C_RESET, W)
+            body += self.card(C_ERRC, C_DIM + " - Access " + C_BOLD + C_TEXT + key + C_RESET, W)
+            if kind == "perm" and "/" in key:
+                pattern = key.rsplit("/", 1)[0] + "/*"
+                body += self.card(C_DIM, C_DIM + "  Patterns: " + C_TEXT + pattern + C_RESET, W)
+            hint = "   ←/→ select · enter confirm" if kind == "perm" else "   Enter confirm · Esc cancel"
+            body += self.card(C_ERRC, "  ".join(parts) + hint, W)
         elif self.palette:
             body += self.palette_card(W)
         elif self.sess_pick:
@@ -1742,10 +1752,10 @@ class UI:
                 self.redraw()
                 k = raw_key()
                 if k == "RIGHT":
-                    self.popup_idx = (self.popup_idx + 1) % 3
+                    self.popup_idx = (self.popup_idx + 1) % 4
                 elif k == "LEFT":
-                    self.popup_idx = (self.popup_idx - 1) % 3
-                elif k in ("1", "2", "3"):
+                    self.popup_idx = (self.popup_idx - 1) % 4
+                elif k in ("1", "2", "3", "4"):
                     self.popup_idx = int(k) - 1
                     break
                 elif k in ("q", "Q", "CTRL-C", "ESC"):
@@ -1755,7 +1765,7 @@ class UI:
         finally:
             self.popup = None
             self.redraw()
-        return ("allow_once", "deny_once", "always")[self.popup_idx]
+        return ("allow_once", "allow_session", "always", "deny_once")[self.popup_idx]
 
     # ---------- run ----------
 
@@ -1774,7 +1784,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.9" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.10" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()

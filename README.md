@@ -48,9 +48,10 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
   - `<run root>command</run>` — root (su) command
   - `<read path="/path">x</read>` / `<write path="/path">content</write>`
   - `<ls>dir</ls>` / `<search>query</search>`
-- **Permission system** — arrow-key prompt: `← →` Yes / No / Always, `Enter` confirm
+- **Permission system** — arrow-key prompt: `← →` Allow once / Allow session / Always / Reject, `Enter` confirm
   - Web search: default ON (permission chara) | read/ls: default allow
   - Rules: `/perm cmd add 'rm' deny`, `/perm rootcmd add 'mount' always`, `/perm cmd always` (default)
+  - **Allow session** — current chat-e auto allow, next chat-e ask again
 - **Root support** — rooted phone e `su -c` diye system-level kaj; non-rooted phone e automatic normal mode
 - **Auto model fallback** — rate limit/error hole onno free model e automatic switch
 - **Session manager** — `/save`, `/load`, `/sessions`, `/rm` + auto-save; session e `Ctrl+D` = delete (Yes/No confirm), `Ctrl+R` = rename (name edit kore Enter), footer e hint dekhabe
