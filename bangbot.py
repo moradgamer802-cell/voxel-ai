@@ -858,6 +858,7 @@ class UI:
         self.renaming = False
         self.scroll_off = 0
         self._acc = ""
+        self._esc_pending = False
         self.spin = "⠋"
         self._draw_lock = threading.Lock()
         self.resized = False
@@ -1107,15 +1108,31 @@ class UI:
 
     def session_pick_card(self, W):
         out = []
-        out += self.card(C_ACC, C_BOLD + "📁 Sessions — select kore Enter (Esc close)" + C_RESET, W)
-        for i, item in enumerate(self.sess_pick):
+        out += self.card(C_ACC, C_BOLD + "Sessions" + C_RESET + " " * (W - 15) + C_MUTED + "esc" + C_RESET, W)
+        out.append(self.card_row(C_MUTED, "Search", W))
+        out.append(self.card_row(C_MUTED, "", W))
+        # Group by date
+        from collections import defaultdict
+        by_date = defaultdict(list)
+        for item in self.sess_pick:
             name = item[0]
+            mtime = item[1]
             count = item[2] if len(item) > 2 else 0
-            label = f"{name} ({count} msgs)"
-            if i == self.sess_idx:
-                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
-            else:
-                out.append(self.card_row(C_MUTED, "  " + label, W))
+            preview = item[3] if len(item) > 3 else ""
+            dt = time.strftime("%a %b %d %Y", time.localtime(mtime))
+            by_date[dt].append((name, count, preview))
+        for date, sessions in by_date.items():
+            out.append(self.card_row(C_ACC, C_BOLD + date + C_RESET, W))
+            for name, count, preview in sessions:
+                label = f"{name} — {preview[:25]}" if preview else name
+                if len(sessions) > 1 and name == self.sess_pick[self.sess_idx][0]:
+                    out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
+                elif name == self.sess_pick[self.sess_idx][0]:
+                    out.append(self.card_row(C_ACC, C_BOLD + "❯ " + label + C_RESET, W))
+                else:
+                    out.append(self.card_row(C_MUTED, "  " + label, W))
+        out.append(self.card_row(C_MUTED, "", W))
+        out.append(self.card_row(C_MUTED, "pin/unpin " + C_BOLD + "ctrl+f" + C_RESET + "  delete " + C_BOLD + "ctrl+d" + C_RESET + "  rename " + C_BOLD + "ctrl+r" + C_RESET, W))
         return out
 
     def key_sess_pick(self, k):
@@ -1165,26 +1182,37 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.12 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.13 · " + self.model, W)]
         body = [""]
-        body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
+        # ASCII art logo
+        logo = [
+            "  " + C_BOLD + C_TEXT + "  ██╗   ██╗ ██████╗ ██╗  ██╗    ███████╗██╗" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "  ╚██╗ ██╔╝██╔═══██╗╚██╗██╔╝    ██╔════╝██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "   ╚████╔╝ ██║   ██║ ╚███╔╝     ███████╗██║" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "    ╚██╔╝  ██║   ██║ ██╔██╗     ╚════██║╚═╝" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "     ██║   ╚██████╔╝██╔╝ ██╗    ███████║██╗" + C_RESET,
+            "  " + C_BOLD + C_TEXT + "     ╚═╝    ╚═════╝ ╚═╝  ╚═╝    ╚══════╝╚═╝" + C_RESET,
+        ]
+        body.extend(logo)
         body.append("")
-        items = [("__new__", "＋ New Chat", "start a fresh chat", "")] + \
-                [(n, n, rel_time(t), f"{c} msgs" + (f" · {p}" if p else "")) for n, t, c, p in session_list()]
+        # Sessions list
+        body.append("  " + C_MUTED + "Sessions" + C_RESET)
+        body.append("")
+        items = session_list()
         self.cur = max(0, min(self.cur, len(items) - 1))
-        for i, (name, label, sub, info) in enumerate(items):
+        for i, (name, t, count, preview) in enumerate(items[:10]):
+            label = name
+            sub = f"{count} msgs · {preview[:30]}" if preview else f"{count} msgs"
             if i == self.cur:
                 pad = max(1, W - 6 - dlen(label) - dlen(sub))
                 body.append("  " + C_ACC + "│" + C_RESET + C_PANEL + " " + C_BOLD
                             + C_TEXT + label + C_RESET + C_PANEL + " " * pad
                             + C_MUTED + sub + C_RESET)
-                if info:
-                    body.append("  " + C_ACC + "│" + C_RESET + C_DIM + "  " + info + C_RESET)
             else:
                 pad = max(1, W - 4 - dlen(label) - dlen(sub))
                 body.append("    " + C_DIM + label + " " * pad + sub + C_RESET)
-                if info:
-                    body.append("      " + C_DIM + info[:W-8] + C_RESET)
+        if not items:
+            body.append("    " + C_DIM + "No sessions yet — type to start" + C_RESET)
         body.append("")
         if self.palette:
             body += self.palette_card(W)
@@ -1192,6 +1220,9 @@ class UI:
             body += self.model_pick_card(W)
         else:
             body.append("  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Ctrl+P = commands" + C_RESET)
+        # Tip section
+        body.append("")
+        body.append("  " + C_WARN + "● Tip" + C_RESET + " " + C_MUTED + "Type /help for commands · /models to change model" + C_RESET)
         for label, text in self.notices:
             if label == "ERR":
                 color = C_ERRC
@@ -1762,6 +1793,7 @@ class UI:
         self._revealed = 0
         self._stream_start = time.time()
         self._stream_tokens = 0
+        self._esc_pending = False
         self.pending = ""
         typed = []
         self.redraw()
@@ -1770,7 +1802,18 @@ class UI:
                 r, _, _ = select.select([sys.stdin], [], [], 0.15)
                 if r:
                     k = raw_key()
-                    if k in ("CTRL-C", "ESC", "CTRL-P"):
+                    if k == "CTRL-C":
+                        self.cancel = True
+                        break
+                    elif k == "ESC":
+                        if not self._esc_pending:
+                            self._esc_pending = True
+                            self.notice("SYS", "ESC pressed again to interrupt")
+                            self.redraw()
+                        else:
+                            self.cancel = True
+                            break
+                    elif k in ("CTRL-P",):
                         self.cancel = True
                         break
                     elif k == "BACK":
@@ -1911,7 +1954,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.12" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.13" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()

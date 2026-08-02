@@ -61,6 +61,9 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 - **Auto model fallback** — rate limit/error hole onno free model e automatic switch
 - **Session manager** — `/save`, `/load`, `/sessions`, `/rm` + auto-save; session e `Ctrl+D` = delete (Yes/No confirm), `Ctrl+R` = rename (name edit kore Enter), footer e hint dekhabe
 - **Model picker** — `/models` diye interactive popup, ↑/↓ select, Enter change, current model ● marker, home + chat dono e kaj kore
+- **Opencode-style home** — ASCII art logo, clean sessions list with preview, Tip section
+- **Sessions popup** — date grouped, search, preview, footer hints (ctrl+d delete, ctrl+r rename)
+- **Double ESC interrupt** — streaming e ESC = first notice, second ESC = interrupt
 - **Web search** — DuckDuckGo (real URLs)
 - **Token counter** — `/stats`
 
