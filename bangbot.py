@@ -80,6 +80,13 @@ Rules:
 - 'termux-*' command available ache (termux-api installed thakle).
 - Reply e nijer nam/shurur greeting (jemon "VOXEL AI bhalo achi", "ki kore help korte pari") force koro na — direct user er proshner jawab dao."""
 
+PLAN_PROMPT = """EKHTAR PLAN MODE E ACHO! Ei mode e tumi SHUDHU analyze/plan korba:
+- KONO <write> tool use korbe NA — kono file create/modify korbe na.
+- KONO <run> tool use korbe NA — kono command chalabe na.
+- <read>/<ls>/<search> allowed — egulo diye information dekhte paro.
+- User ke ekta clear plan/proposal dao: ki ki change lagbe, koto step e, ki output asbe.
+- Kono change tokhoni korte parba jokhon user build mode e chole jabe (Tab press kore)."""
+
 C_RED = "\033[91m"
 C_GREEN = "\033[92m"
 C_YELLOW = "\033[93m"
@@ -102,6 +109,8 @@ C_USER = "\x1b[38;2;34;197;94m"
 C_GOOD = "\x1b[38;2;52;211;153m"
 C_ERRC = "\x1b[38;2;244;135;113m"
 C_WARN = "\x1b[38;2;250;204;21m"
+C_PLAN = "\x1b[38;2;88;200;120m"     # plan mode green (opencode-like)
+C_BUILD = "\x1b[38;2;56;150;255m"    # build mode blue
 CSI_FINAL_CHARS = "@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~`"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x1b\[[0-9;]*[A-Za-z]")
 
@@ -600,11 +609,16 @@ def help_text():
     return "\n".join([
         "Commands:",
         "  /model <id>      model change        /models      free model list",
-        "  /new             new chat            /sessions    saved chats",
+        "  /new             new chat            /sessions    popup session list",
         "  /save [name]     save chat           /load <name> load chat",
         "  /rm <name>       delete session      /stats       token count",
         "  /perm            permission rules    /root        root toggle",
+        "  /mode            Plan/Build toggle (Tab o kaj kore)",
         "  /exit            quit",
+        "",
+        "Modes:",
+        "  Plan mode (green): AI shudhu analyze/plan kore — file/command kono change na",
+        "  Build mode (blue): AI file likhte / command chalate pare",
         "",
         "AI tools (AI nije use korbe):",
         "  search: default ON (permission chara) | read/ls: default allow",
@@ -771,7 +785,7 @@ PALETTE_CMDS = ["/help", "/new", "/models", "/sessions", "/save", "/load", "/rm"
                 "/perm", "/root", "/stats", "/exit"]
 NEEDS_ARG = ("/save", "/load", "/rm")
 
-TYPESTEP = 24
+TYPESTEP = 6
 
 
 class UI:
@@ -786,6 +800,7 @@ class UI:
         self.notices = []
         self.notes = []
         self.status = "ready"
+        self.mode = "build"
         self.session_perm = {"cmd": set(), "file": set()}
         self.loaded_name = None
         self.buf = ""
@@ -800,8 +815,10 @@ class UI:
         self.popup_idx = 0
         self.palette = False
         self.palette_idx = 0
+        self.sess_pick = None
+        self.sess_idx = 0
         self.scroll_off = 0
-        self._inbuf = ""
+        self._acc = ""
         self.spin = "⠋"
         self._draw_lock = threading.Lock()
         self.resized = False
@@ -843,11 +860,14 @@ class UI:
                 time.sleep(0.1)
                 continue
             tick += 1
-            if self._inbuf:
-                self.pending += self._inbuf[:TYPESTEP]
-                self._inbuf = self._inbuf[TYPESTEP:]
+            acc = self._acc
+            n = len(acc) - self._revealed
+            if n > 0:
+                step = min(TYPESTEP, n)
+                self.pending += acc[self._revealed:self._revealed + step]
+                self._revealed += step
                 self.redraw()
-                time.sleep(0.035)
+                time.sleep(0.04)
             elif not self.pending:
                 self.spin = SPINNER[tick % len(SPINNER)]
                 self.redraw()
@@ -939,6 +959,32 @@ class UI:
         return ("  " + C_ACC + "❯" + C_RESET + " " + C_MUTED
                 + "Type a message... (or /help)" + C_RESET)
 
+    def prompt_box(self, W):
+        """opencode-style input box, border color = mode (plan green / build blue)."""
+        color = C_PLAN if self.mode == "plan" else C_BUILD
+        disp = self.buf
+        while dlen(disp) > W - 11:
+            disp = disp[1:]
+        if dlen(disp) > W - 12:
+            disp = "…" + disp
+        if disp:
+            inner = C_TEXT + disp + C_RESET
+            plain = "❯ " + disp
+        else:
+            inner = C_MUTED + "Type a message... (or /help)" + C_RESET
+            plain = "❯ " + "Type a message... (or /help)"
+        pad = max(1, W - 6 - dlen(plain))
+        return [
+            "  " + color + "┌" + "─" * (W - 4) + "┐" + C_RESET,
+            "  " + color + "│" + C_RESET + " " + C_ACC + "❯" + C_RESET + " " + inner + " " * pad + " " + color + "│" + C_RESET,
+            "  " + color + "└" + "─" * (W - 4) + "┘" + C_RESET,
+        ]
+
+    def mode_chip(self):
+        if self.mode == "plan":
+            return C_PLAN + "● plan" + C_RESET
+        return C_BUILD + "● build" + C_RESET
+
     def footer_line(self):
         if self.popup:
             return "  " + C_MUTED + "←/→ Select · Enter Confirm · q Deny" + C_RESET
@@ -949,14 +995,16 @@ class UI:
             bar = "▰" * p + "⬝" * (8 - p)
             return "  " + C_ACC + bar + C_RESET + "  " + C_MUTED + "[Esc] Interrupt · [Ctrl+P] Commands" + C_RESET
         if self.route == "home":
-            return "  " + C_MUTED + "↑/↓ Navigate · Enter Open · Type = New Chat · [Ctrl+P] Commands" + C_RESET
+            return "  " + C_MUTED + "↑/↓ select · Enter open · type = new chat · Tab = Plan/Build" + C_RESET
         if self.scroll_off > 0:
             return "  " + C_MUTED + "[↓ Newer] swipe down / wheel · [Ctrl+P] Commands" + C_RESET
         parts = ["[Enter] Send"]
         if self.buf.startswith("/"):
             parts.append("[Tab] Complete")
+        else:
+            parts.append("[Tab] Plan/Build")
         parts.append("[Esc] Home")
-        parts.append("[Ctrl+P] Commands")
+        parts.append("[Ctrl+P]")
         return "  " + C_MUTED + " · ".join(parts) + C_RESET
 
     def palette_card(self, W):
@@ -969,8 +1017,32 @@ class UI:
                 out.append(self.card_row(C_MUTED, "  " + c, W))
         return out
 
+    def session_pick_card(self, W):
+        out = []
+        out += self.card(C_ACC, C_BOLD + "📁 Sessions — select kore Enter (Esc close)" + C_RESET, W)
+        for i, (name, t) in enumerate(self.sess_pick):
+            if i == self.sess_idx:
+                out.append(self.card_row(C_ACC, C_BOLD + "❯ " + name + C_RESET, W))
+            else:
+                out.append(self.card_row(C_MUTED, "  " + name, W))
+        return out
+
+    def key_sess_pick(self, k):
+        if k == "UP":
+            self.sess_idx = max(0, self.sess_idx - 1)
+        elif k == "DOWN":
+            self.sess_idx = min(len(self.sess_pick) - 1, self.sess_idx + 1)
+        elif k == "ENTER":
+            name = self.sess_pick[self.sess_idx][0]
+            self.sess_pick = None
+            self.open_session(name)
+            return
+        elif k in ("ESC", "CTRL-C", "CTRL-P"):
+            self.sess_pick = None
+        self.redraw()
+
     def frame_home(self, W, H):
-        lines = [self.hdr("voxel", "v3.5.5 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.6 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -1005,7 +1077,7 @@ class UI:
 
     def frame_chat(self, W, H):
         tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
-        right = f"● {self.model} · tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
+        right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
         title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
         lines = [self.hdr("# " + title, right, W)]
         body = []
@@ -1040,18 +1112,21 @@ class UI:
         if self.popup:
             kind, key = self.popup
             opts = ["Yes", "No", "Always"]
+            opt_colors = [C_GOOD, C_ERRC, C_WARN]
             parts = []
             for i, o in enumerate(opts):
                 if i == self.popup_idx:
-                    parts.append(C_BOLD + "\x1b[7m " + o + " " + C_RESET)
+                    parts.append(C_BOLD + "\x1b[7m" + opt_colors[i] + " " + o + " " + C_RESET)
                 else:
-                    parts.append(C_MUTED + o + C_RESET)
+                    parts.append(opt_colors[i] + o + C_RESET)
             body += self.card(C_ERRC, "⚖ permission: " + kind, W)
             body += self.card(C_ERRC, C_BOLD + key + C_RESET, W)
             body += self.card(C_ERRC, "←/→ " + "  ".join(parts) + "   Enter ok · q deny", W)
         elif self.palette:
             body += self.palette_card(W)
-        body_max = max(1, H - 3)
+        elif self.sess_pick:
+            body += self.session_pick_card(W)
+        body_max = max(1, H - 5)
         if len(body) > body_max:
             max_scroll = len(body) - body_max
             self.scroll_off = max(0, min(self.scroll_off, max_scroll))
@@ -1061,7 +1136,7 @@ class UI:
             self.scroll_off = 0
             body += [""] * (body_max - len(body))
         lines += body
-        lines.append(self.prompt_line(W))
+        lines += self.prompt_box(W)
         lines.append(self.footer_line())
         return lines[:H]
 
@@ -1121,6 +1196,8 @@ class UI:
             self.palette = True
             self.palette_idx = 0
             self.redraw()
+        elif k == "TAB":
+            self.toggle_mode()
         elif k == "ESC":
             self.redraw()
         elif k.isprintable():
@@ -1178,6 +1255,9 @@ class UI:
         if self.palette:
             self.key_palette(k)
             return
+        if self.sess_pick:
+            self.key_sess_pick(k)
+            return
         if k in ("WHEEL_UP", "WHEEL_DOWN"):
             self.scroll_off += 4 if k == "WHEEL_UP" else -4
             self.scroll_off = max(0, self.scroll_off)
@@ -1212,7 +1292,10 @@ class UI:
             self.buf = self.buf[:-1]
             self.redraw()
         elif k == "TAB":
-            self.complete()
+            if self.buf.startswith("/"):
+                self.complete()
+            else:
+                self.toggle_mode()
         elif k == "UP":
             if self.hist:
                 self.hidx = max(0, self.hidx - 1)
@@ -1244,6 +1327,14 @@ class UI:
         self.buf = matches[self._comp]
         self.redraw()
 
+    def toggle_mode(self):
+        self.mode = "plan" if self.mode == "build" else "build"
+        if self.mode == "plan":
+            self.notice("MODE", "Plan mode ON — AI shudhu analyze/plan korbe, kono file/command change korbe na. Build mode e firtte Tab.")
+        else:
+            self.notice("MODE", "Build mode ON — AI kaj korte parbe (files, commands).")
+        self.redraw()
+
     # ---------- commands ----------
 
     def run_command(self, text):
@@ -1253,6 +1344,13 @@ class UI:
             return True
         if user_input == "/help":
             self.notice("HELP", help_text())
+            return True
+        if user_input in ("/mode", "/plan", "/build"):
+            self.mode = "plan" if user_input == "/plan" or (user_input == "/mode" and self.mode == "build") else "build"
+            if self.mode == "plan":
+                self.notice("MODE", "Plan mode ON — AI shudhu analyze/plan korbe, kono file/command change korbe na. Build mode e firtte Tab.")
+            else:
+                self.notice("MODE", "Build mode ON — AI kaj korte parbe (files, commands).")
             return True
         if user_input == "/new":
             self.open_session("__new__")
@@ -1304,9 +1402,17 @@ class UI:
                 self.notice("PERM", show_perms(self.cfg))
             return True
         if user_input == "/sessions":
-            names = list_sessions()
-            txt = "Saved sessions: " + (", ".join(names) if names else "(kono session nai)")
-            self.notice("SESSIONS", txt + "\nLoad: /load <name> | Delete: /rm <name>")
+            lst = session_list()
+            if not lst:
+                self.notice("SESSIONS", "Kono saved session nai.")
+                return True
+            if self.plain:
+                txt = "Saved sessions: " + (", ".join(n for n, _ in lst))
+                self.notice("SESSIONS", txt + "\nLoad: /load <name> | Delete: /rm <name>")
+            else:
+                self.sess_pick = lst
+                self.sess_idx = 0
+                self.palette = False
             return True
         if user_input.startswith("/save"):
             name = user_input.split(None, 1)[1].strip() if len(user_input.split(None, 1)) > 1 else time.strftime("chat-%Y%m%d-%H%M%S")
@@ -1360,19 +1466,25 @@ class UI:
         parts = []
         done = threading.Event()
         result = {}
+        msgs = self.messages
+        if self.mode == "plan":
+            msgs = [{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + PLAN_PROMPT}] + list(self.messages[1:])
 
         def on_chunk(kind, text):
             parts.append((kind, text))
+            if kind == "content":
+                self._acc += text
 
         def worker():
-            result["err"], result["model"] = call_chat(self.messages, self.model, self.api_key, on_chunk)
+            result["err"], result["model"] = call_chat(msgs, self.model, self.api_key, on_chunk)
             done.set()
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         self.streaming = True
         self.cancel = False
-        self._inbuf = ""
+        self._acc = ""
+        self._revealed = 0
         self.pending = ""
         typed = []
         self.redraw()
@@ -1393,13 +1505,13 @@ class UI:
                         typed.append(k)
                         self.buf = "".join(typed)
                         self.redraw()
-                self._inbuf = "".join(x for kind, x in parts if kind == "content")
         except KeyboardInterrupt:
             self.cancel = True
         finally:
             self.streaming = False
-            self.pending = self.pending + self._inbuf
-            self._inbuf = ""
+            self.pending = self._acc
+            self._acc = ""
+            self._revealed = 0
             self.reasoning = ""
             if typed and not self.cancel:
                 self.buf = "".join(typed)
@@ -1442,6 +1554,11 @@ class UI:
                 break
             results = []
             for name, attrs, tcontent in tools:
+                if self.mode == "plan" and name in ("write", "run"):
+                    self.notes.append(C_RED + "⛔ plan mode: " + name + " skip — shudhu plan/analyze" + C_RESET)
+                    results.append(f"[tool {name}: plan mode e nishedh — user shudhu plan/analysis chaiche, kono change koro na]")
+                    self.redraw()
+                    continue
                 if name == "write":
                     arg = attrs.get("path", "").strip()
                     tool_content = tcontent
@@ -1515,7 +1632,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.5" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.6" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()

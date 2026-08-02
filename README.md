@@ -35,6 +35,11 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 - **Compact tool logs** — tool er full output chat e dekha jay na: `✓ run: <cmd>` / `✗ run: <cmd> — <error>` short line
 - **Diff view on file writes** — AI file rewrite korle opencode er moto diff card dekhabe: `← Edit <path>` header + line numbers, `-` red / `+` green (new file: `← Write <path>`)
 - **Boot = Home screen** — app khule home e ase (recent sessions list), type korlei new chat
+- **Plan/Build mode (`Tab`)** — Tab chaple mode toggle: Plan (green) = AI shudhu analyze/plan kore, kono file/command change na; Build (blue) = full agent. `/mode`, `/plan`, `/build` o kaj kore
+- **Input box** — opencode er moto bordered input box, border color = mode (plan green / build blue)
+- **Smooth streaming** — reply "1ta 1ta" kore typewriter style e ashe (race-free reveal)
+- **`/sessions` popup** — chat theke sessions popup e dekhabe, ↑/↓ select + Enter open (Esc close)
+- **`Ctrl+P` palette** — commands list + `/exit` option (app ber hote)
 - **Low-device friendly** — pure Python stdlib, no dependencies, kono pip install nai
 - **Free AI models** — DeepSeek V4 Flash Free, Big Pickle, MiMo, Nemotron, etc. (OpenCode Zen)
 - **AI agent tools** — AI nijei command chalao, file read/write, folder list, web search:
