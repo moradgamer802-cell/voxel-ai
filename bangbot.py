@@ -834,7 +834,7 @@ class UI:
     def __init__(self, cfg):
         self.cfg = cfg
         self.api_key = get_api_key(cfg)
-        self.model = cfg.get("model") or DEFAULT_MODEL
+        self.model = DEFAULT_MODEL
         self.root_on = cfg.get("root", False)
         self.plain = not (termios and sys.stdin.isatty())
         self.route = "home"
@@ -1194,7 +1194,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.17 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.18 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1972,7 +1972,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.17" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.18" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
