@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/in
 - **`Esc` = Interrupt** — AI reply asar somoy Esc chapele reply stop hoy (chat exit hoy na); arobar Esc = Home
 - **Touch scrollback** — chat e upor/dhon swipe korle purono messages dekha jay (mouse tracking on), niche swipe = notun messages; type korlei bottom e fere ase
 - **Compact tool logs** — tool er full output chat e dekha jay na: `✓ run: <cmd>` / `✗ run: <cmd> — <error>` short line
-- **Diff view on file writes** — AI file rewrite korle opencode er moto diff card dekhabe: `← Edit <path>` header + line numbers, `-` red / `+` green (new file: `← Write <path>`)
+- **Diff view on file writes** — AI file rewrite korle opencode er moto diff card dekhabe: `← Edit <path>` header + line numbers, `-` red / `+` green (new file: `← Write <path>`). Boro diff (6+ line) hoile choto kore `… N more` + `+N −N` stats + `[Enter] expand` hint dekhabe; khali `Enter` chaple full diff expand/collapse hobe
 - **Boot = Home screen** — app khule home e ase (recent sessions list), type korlei new chat
 - **Plan/Build mode (`Tab`)** — Tab chaple mode toggle: Plan (green) = AI shudhu analyze/plan kore, kono file/command change na; Build (blue) = full agent. `/mode`, `/plan`, `/build` o kaj kore
 - **Input box** — opencode er moto bordered input box, border color = mode (plan green / build blue)

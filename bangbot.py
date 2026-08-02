@@ -817,6 +817,7 @@ class UI:
         self.palette_idx = 0
         self.sess_pick = None
         self.sess_idx = 0
+        self.expand_diffs = set()
         self.scroll_off = 0
         self._acc = ""
         self.spin = "⠋"
@@ -920,13 +921,21 @@ class UI:
         title = ("← Edit " if d.get("exists") else "← Write ") + path
         out += self.card(C_ACC, C_BOLD + C_TEXT + title + C_RESET, W)
         lines = d["lines"]
-        maxn = max((len(str(a or b)) for _, a, b, _ in lines), default=0)
-        max_show = 40
-        if len(lines) > max_show:
-            lines = lines[:max_show]
-            tail = True
+        adds = sum(1 for k, *_ in lines if k == "+")
+        dels = sum(1 for k, *_ in lines if k == "-")
+        stats = C_MUTED + "  +" + str(adds) + " −" + str(dels) + C_RESET
+        expanded = path in self.expand_diffs
+        tail = False
+        if len(lines) > 6 and not expanded:
+            lines = lines[:4]
+            collapsed = True
         else:
-            tail = False
+            collapsed = False
+            max_show = 40
+            if len(lines) > max_show:
+                lines = lines[:max_show]
+                tail = True
+        maxn = max((len(str(a or b)) for _, a, b, _ in lines), default=0)
         for kind, a, b, text in lines:
             if kind == "-":
                 num, fg, mark = a, C_RED, "-"
@@ -937,9 +946,25 @@ class UI:
             txt = truncate(text.replace("\t", "  "), W - 12).replace("\n", " ")
             ln = fg + mark + str(num or " ").rjust(maxn) + " " + txt + C_RESET
             out.append(self.card_row(fg, ln, W))
-        if tail:
+        if collapsed:
+            left = len(d["lines"]) - len(lines)
+            out.append(self.card_row(C_ACC, C_BOLD + "… " + str(left) + " more" + C_RESET
+                                     + stats + C_MUTED + "  [Enter] expand" + C_RESET, W))
+        elif tail:
             out.append(self.card_row(C_MUTED, "… " + str(len(d["lines"]) - max_show) + " more", W))
         return out
+
+    def toggle_diff_expand(self):
+        """Enter on empty buf: expand/collapse the most recent big diff card."""
+        for n in reversed(self.notes):
+            if isinstance(n, dict) and len(n["lines"]) > 6:
+                path = n["path"]
+                if path in self.expand_diffs:
+                    self.expand_diffs.discard(path)
+                else:
+                    self.expand_diffs.add(path)
+                return True
+        return False
 
     def plain_block(self, model, text, W):
         out = []
@@ -1042,7 +1067,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.6 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.7 · " + self.model, W)]
         body = [""]
         body.append("  " + C_MUTED + "Recent sessions" + C_RESET)
         body.append("")
@@ -1271,6 +1296,8 @@ class UI:
                 self.hidx = len(self.hist)
                 self.buf = ""
                 self.send(text)
+            elif self.toggle_diff_expand():
+                self.redraw()
             else:
                 self.redraw()
         elif k == "CTRL-P":
@@ -1632,7 +1659,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.6" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.7" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
