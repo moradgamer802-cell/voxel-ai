@@ -2,7 +2,7 @@
 """
 BangBot v2.0 - free AI agent CLI assistant for Termux
 Powered by OpenCode Zen free models
-Tools: run / read / write / ls / search | Permission system | Root support
+Tools: run / read / write / ls / search | Permission system
 Run:  python3 bangbot.py
 """
 
@@ -64,15 +64,13 @@ TOOL USE (khub important):
 Kono kaj korar dorkar hole, khali text diye korte jaibe na - ei tags use korbe:
 
 <run>command</run>                        - Termux e command chalabe (ls, pwd, python3 etc)
-<run root>command</run>                 - ROOT command (su) - e.g. chmod, mount, termux-fix-shebang
 <read path="/path/to/file">x</read>     - file content dekhte
 <write path="/path/to/file">content</write> - file likhte (content tag er vitore)
 <ls>directory/path</ls>                - folder listing
 <search>question</search>              - internet search
 
 Rules:
-- Root dorkar hote pare (su permission chai) — tahole <run root> use koro, user approve korbe.
-- Phone e root na thakle <run root> kaj korbe na — tahole normal vabe kaj koro ar user ke bolo root lagbe.
+- STORAGE IMPORTANT: User jokhon storage/file access bole (like "storage kholo", "sdcard", "internal memory", "file ta dekho"), ALWAYS `/storage/emulated/0/` path use korbe (NOT `~`, NOT Termux home, NOT relative path). E.g. `<ls>/storage/emulated/0</ls>`, `<run>ls /storage/emulated/0</run>`.
 - <search> always allowed — internet search kono permission chara cholbe (default capability).
 - <read>/<ls> o default allowed (read-only). <write>/<run> e prompt asbe: Yes/No/Always (arrow diye select).
 - Ekbare ekta tag use koro, result ashle tarpor aro kaj lagle abar tag use korbe.
@@ -291,13 +289,8 @@ def ddg_search(query, max_results=5):
     return results
 
 
-def run_command(cmd, root):
+def run_command(cmd, root=False):
     actual = cmd
-    if root:
-        su = shutil.which("su")
-        if not su:
-            return -1, "su command paoa gelo na (root nai?)", "su -c ..."
-        actual = su + " -c " + shlex.quote(cmd)
     try:
         proc = subprocess.run(
             actual, shell=True, capture_output=True, text=True,
@@ -375,7 +368,7 @@ def check_perm(cfg, category, key, session_perm, prompt=True, auto_approve=False
         return True
     if not prompt:
         return True
-    label = {"cmd": "run command", "rootcmd": "run command (ROOT)", "file": "file op"}.get(category, category)
+    label = {"cmd": "run command", "file": "file op"}.get(category, category)
     decision = ask_permission(label, key)
     if decision == "always":
         cfg.setdefault("perm", {}).setdefault(category, {})[key] = "always"
@@ -417,29 +410,28 @@ def make_diff_lines(old, new, ctx=2):
     return lines
 
 
+def storage_path(p):
+    """~/storage, /sdcard -> /storage/emulated/0 (Termux default er bodole internal storage)"""
+    p = p.replace("$HOME/storage", "/storage/emulated/0")
+    if p == "~/storage" or p.startswith("~/storage/"):
+        p = "/storage/emulated/0" + p[len("~/storage"):]
+    if p == "/sdcard" or p.startswith("/sdcard/"):
+        p = "/storage/emulated/0" + p[len("/sdcard"):]
+    return os.path.expanduser(p)
+
+
 def exec_tool(cfg, name, arg, content, session_perm, attrs=None, auto_approve=False):
     """Returns (result_text, diff_info_or_None)."""
     attrs = attrs or {}
     if name == "run":
-        wants_root = "root" in attrs and attrs.get("root", "").lower() in ("true", "1", "yes", "")
-        root = cfg.get("root", False) or wants_root
-        category = "rootcmd" if wants_root else "cmd"
-        if not check_perm(cfg, category, arg, session_perm, auto_approve=auto_approve):
+        if not check_perm(cfg, "cmd", arg, session_perm, auto_approve=auto_approve):
             return "[Tool run: user denied]", None
-        if wants_root and not shutil.which("su"):
-            return "[Tool run: su paoa gelo na — root mode jeno ON thake (termux e /root) ba rooted device dorkar]", None
-        ui_note(C_DIM + f"$ {short(arg, 40)}" + ("  (root)" if wants_root else "") + C_RESET)
-        code, out, shown = run_command(arg, root)
-        if root:
-            ui_note(C_DIM + f"(root: {short(shown, 40)})" + C_RESET)
-        if not wants_root and not cfg.get("root") and code != 0 and re.search(
+        ui_note(C_DIM + f"$ {short(arg, 40)}" + C_RESET)
+        code, out, shown = run_command(arg, False)
+        if code != 0 and re.search(
             r"permission denied|operation not permitted|not permitted|eacces", out, re.I
-        ) and shutil.which("su"):
-            ui_note(C_YELLOW + "! Permission denied — root diye try korbo?")
-            if check_perm(cfg, "rootcmd", arg, session_perm, auto_approve=auto_approve):
-                ui_note(C_DIM + "* root diye retry korchi...")
-                code, out, _ = run_command(arg, True)
-                return f"[Tool run (root retry) exit={code}]\n{truncate(out)}\n[/Tool run]", None
+        ):
+            ui_note(C_YELLOW + "! Permission denied — kono kichu korar dorkar nei, AI ke bolo.")
         return f"[Tool run exit={code}]\n{truncate(out)}\n[/Tool run]", None
 
     if name == "ls":
@@ -591,13 +583,11 @@ def show_perms(cfg):
     perm = cfg.get("perm", {})
     lines = ["Permission rules:"]
     lines.append(f"  default command: {perm.get('default_cmd', 'ask')}")
-    lines.append(f"  default rootcmd: {perm.get('default_rootcmd', 'ask')}")
     lines.append(f"  default file:    {perm.get('default_file', 'ask')}")
     lines.append(f"  command rules:   {perm.get('cmd', {}) or '(none)'}")
-    lines.append(f"  root rules:      {perm.get('rootcmd', {}) or '(none)'}")
     lines.append(f"  file rules:      {perm.get('file', {}) or '(none)'}")
-    lines.append("Set: /perm cmd|rootcmd|file <ask|always|deny> | /perm reset")
-    lines.append("Specific: /perm cmd add '<cmd>' <mode> | /perm rootcmd add '<cmd>' <mode>")
+    lines.append("Set: /perm cmd|file <ask|always|deny> | /perm reset")
+    lines.append("Specific: /perm cmd add '<cmd>' <mode>")
     return "\n".join(lines)
 
 
@@ -631,7 +621,7 @@ def help_text():
         "  /save [name]     save chat           /load <name> load chat",
         "  /rm <name>       delete session      /stats       token count",
         "  Session e: Ctrl+D = delete (confirm) · Ctrl+R = rename (Enter save)",
-        "  /perm            permission rules    /root        root toggle",
+        "  /perm            permission rules    /undo        last message revert",
         "  /mode            Plan/Build toggle (Tab o kaj kore)",
         "  /exit            quit",
         "",
@@ -642,10 +632,10 @@ def help_text():
         "AI tools (AI nije use korbe):",
         "  search: default ON (permission chara) | read/ls: default allow",
         "  run/write: arrow prompt (←→ Yes/No/Always, Enter confirm)",
-        "  /perm diye rule set: /perm cmd add 'rm' deny | /perm rootcmd add 'mount' always",
-        "  Root dorkar: AI <run root> tag use korbe, permission denied holeo auto-retry",
+        "  /perm diye rule set: /perm cmd add 'rm' deny",
         "  Permission options: Allow once | Allow session (current chat) | Always (save) | Reject",
         "  Ctrl+E: toggle auto-approve (all permissions auto-allow, no prompts)",
+        "  Ctrl+Z: last sent message revert",
         "Multi-line: line er seshe '\\' dile continue hobe.",
     ])
 
@@ -833,10 +823,10 @@ def raw_key():
 
 
 COMMAND_LIST = ["/help", "/model ", "/models", "/new", "/undo", "/save ", "/load ", "/sessions",
-                "/rm ", "/stats", "/perm", "/root", "/exit"]
+                "/rm ", "/stats", "/perm", "/exit"]
 
 PALETTE_CMDS = ["/help", "/new", "/models", "/sessions", "/save", "/load", "/rm",
-                "/perm", "/root", "/stats", "/exit", "/undo"]
+                "/perm", "/stats", "/exit", "/undo"]
 NEEDS_ARG = ("/save", "/load", "/rm")
 
 TYPESTEP = 6
@@ -847,7 +837,7 @@ class UI:
         self.cfg = cfg
         self.api_key = get_api_key(cfg)
         self.model = DEFAULT_MODEL
-        self.root_on = cfg.get("root", False)
+        self.root_on = False
         self.plain = not (termios and sys.stdin.isatty())
         self.route = "home"
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -1078,6 +1068,15 @@ class UI:
                     sections.append((cur_kind, cur_title, "\n".join(cur)))
                 cur_kind = "head"
                 cur_title = m.group(1)
+                cur = []
+                continue
+            mi = re.match(r"^\*\*(.+?)\*\*\s*:?\s*(.*)$", s)
+            if mi and not s.startswith("**Summary:**"):
+                if cur or cur_title:
+                    sections.append((cur_kind, cur_title, "\n".join(cur)))
+                sections.append(("head", mi.group(1), mi.group(2)))
+                cur_kind = "text"
+                cur_title = None
                 cur = []
                 continue
             cur.append(raw)
@@ -1339,7 +1338,7 @@ class UI:
         self.redraw()
 
     def frame_home(self, W, H):
-        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.25 · " + self.model, W)]
+        lines = [self.hdr("VOXEL AI", self.mode_chip() + "  v3.5.27 · " + self.model, W)]
         body = [""]
         # ASCII art logo
         logo = [
@@ -1405,7 +1404,7 @@ class UI:
 
     def frame_chat(self, W, H):
         tok = SESSION_TOKENS["in"] + SESSION_TOKENS["out"]
-        right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0 · root:{'ON' if self.root_on else 'OFF'}"
+        right = f"{self.mode_chip()}  ● {self.model} · tok ~{tok} · $0"
         title = self.loaded_name or ("new chat" if len(self.messages) <= 1 else "chat")
         msg_count = len([m for m in self.messages if m.get("role") != "system"])
         if msg_count > 0:
@@ -1888,15 +1887,6 @@ class UI:
                 self.model_pick = FREE_MODELS
                 self.model_idx = 0
             return True
-        if user_input == "/root":
-            if not shutil.which("su"):
-                self.notice("SYS", "su paoa gelo na — rooted device dorkar (Magisk/KernelSU).")
-            else:
-                self.root_on = not self.root_on
-                self.cfg["root"] = self.root_on
-                save_config(self.cfg)
-                self.notice("SYS", f"Root mode: {'ON (su -c)' if self.root_on else 'OFF'}")
-            return True
         if user_input.startswith("/model "):
             new_model = user_input.split(None, 1)[1].strip()
             self.cfg["model"] = new_model
@@ -2197,7 +2187,7 @@ class UI:
         print(C_DIM + "Bye!" + C_RESET)
 
     def run_plain(self):
-        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.25" + C_RESET + "  (" + self.model + ")  —  /help")
+        print(C_BOLD + C_CYAN + "VOXEL AI v3.5.27" + C_RESET + "  (" + self.model + ")  —  /help")
         while not self.quitting:
             try:
                 text = input("❯ ").strip()
