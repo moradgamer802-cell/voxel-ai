@@ -926,6 +926,8 @@ def _decode_csi(read_char):
               "H": "HOME", "F": "END"}
     if k in simple:
         return simple[k]
+    if k == "Z":                      # Shift+Tab (ESC [ Z) — must check before
+        return "S-TAB"               # the numeric handler or it would block
     if k == "M":                      # legacy X10 mouse: 3 bytes follow
         for _ in range(3):
             read_char()
@@ -1599,6 +1601,7 @@ class App:
         self.branch = git_branch()
         self.running = True
         self.W, self.H = term_size()
+        self._tool_running = None
 
     # -------------------------------------------------- notices
 
@@ -2498,8 +2501,8 @@ class App:
                         pass            # keep the user msg so /undo still works
                 return
 
-            self.session.tokens["in"] += est_tokens(reasoning)
-            self.session.tokens["out"] += est_tokens(content)
+            # reasoning is model output, not input — count both as "out"
+            self.session.tokens["out"] += est_tokens(content) + est_tokens(reasoning)
 
             tools = parse_tools(content)
             if not tools and not content.strip():
@@ -2623,6 +2626,7 @@ class App:
 
             self.session.messages.append({"role": "user", "content": text,
                                           "time": time.time()})
+            counted_in = 0   # track how many wire chars already counted
             for _ in range(MAX_TOOL_ROUNDS):
                 wire = [{"role": m["role"], "content": m["content"]}
                         for m in self.session.messages]
@@ -2637,8 +2641,12 @@ class App:
                     print("  error: " + err)
                     break
                 reply = "".join(chunks)
+                # only count tokens added since the previous round to avoid
+                # double-counting the growing conversation history
+                total_in = sum(len(m["content"]) for m in wire)
                 self.session.tokens["in"] += est_tokens(
-                    "".join(m["content"] for m in wire))
+                    max(0, total_in - counted_in))
+                counted_in = total_in
                 self.session.tokens["out"] += est_tokens(reply)
                 self.session.messages.append(
                     {"role": "assistant", "content": reply,
