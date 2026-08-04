@@ -36,7 +36,7 @@ try:
 except ImportError:  # non-posix
     termios = tty = None
 
-VERSION = "4.0.0"
+VERSION = "4.0.1"
 
 HOME = os.path.expanduser("~")
 CONFIG_DIR = os.path.join(HOME, ".voxel")
