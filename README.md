@@ -9,8 +9,9 @@
    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝
 ```
 
-**opencode-style AI agent CLI for Termux · no key, no install, no registration**
+**Free AI Agent CLI for Termux — কোনো key লাগবে না, কোনো account লাগবে না**
 
+[![Version](https://img.shields.io/badge/version-4.0.1-blue)](voxel.py)
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Termux%20%7C%20Android-green?logo=android&logoColor=white)](https://termux.dev)
 [![License](https://img.shields.io/badge/License-MIT-purple)](LICENSE)
@@ -20,196 +21,238 @@
 
 ---
 
-## ◆ কী এটা / What is this
+## ◆ কী এটা?
 
-VOXEL AI হলো Termux-এর জন্য একটা **AI agent CLI**, যার UI, command set, session model
-আর keybind — সব [opencode](https://opencode.ai) এর TUI ফলো করে। Python stdlib ছাড়া
-কিছু লাগে না, কোনো API key বা account লাগে না।
+**VOXEL AI** হলো Android/Termux-এর জন্য একটা AI agent CLI।  
+[opencode](https://opencode.ai)-এর মতো UI, command set আর keybind — কিন্তু **সম্পূর্ণ বিনামূল্যে**, কোনো signup ছাড়া।
 
-> An AI agent CLI for Android/Termux whose layout, commands, sessions and keybinds
-> follow opencode's TUI. Pure stdlib, single file, no account needed.
-
-**Reading hierarchy** — AI-এর reply পুরো brightness-এ normal text হিসেবে আসে।
-Command execution আর tool call আসে **dim + lowercase** ছোট লাইনে, যাতে চোখ সবসময়
-উত্তরের উপর পড়ে, tool noise-এ না।
-
-```
-  ❯ storage e ki ache dekho ar ekta note likho
-
-  → ls /storage/emulated/0/download ✓          ← dim, lowercase
-    notes.txt
-    song.mp3
-  → write /storage/emulated/0/notes.txt ✓
-       1 + hello from voxel
-
-  ◆  ds-v4  thought 1.4s
-  ▏ Storage check                              ← bright, markdown rendered
-  ▏
-  ▏ Download folder e 3 ta file peyechi.
-  ▏
-  ▏ ● notes.txt banano hoyeche
-  ▏ ● ls run korechi
-
-  ╭──────────────────────────────────────────────╮
-  │ ❯ Type a message, /help for commands         │
-  ╰──────────────────────────────────────────────╯
-  ~/proj  │  main  │  ◆ build  │  ds-v4    ~1.2K tok  2%
-```
+- ✅ Python stdlib ছাড়া কিছু লাগে না
+- ✅ Built-in free API key — নিজের key লাগবে না
+- ✅ File read/write, shell command, internet search — সব পারে
+- ✅ Bangla + English দুই ভাষায় কথা বলে
+- ✅ একটাই `.py` file — সহজ install, সহজ update
 
 ---
 
-## ⚡ Install (Termux)
+## ⚡ Installation (Termux)
+
+**Step 1 — Termux খুলুন এবং নিচের command টা paste করুন:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/install.sh | bash
+```
+
+**Step 2 — Terminal restart করুন অথবা এটা run করুন:**
+
+```bash
+source ~/.bashrc
+```
+
+**Step 3 — VOXEL AI চালু করুন:**
+
+```bash
+voxel
+```
+
+> **curl নেই?** আগে এটা run করুন: `pkg install curl`
+
+---
+
+## 🔄 Update
+
+নতুন version পেতে আবার same command চালান:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/install.sh | bash
 source ~/.bashrc
-voxel
 ```
+
+---
+
+## 📸 কেমন দেখতে?
+
+```
+╭──────────────────────────────────────────────╮
+│ ❯ storage e ki ache dekho                   │
+╰──────────────────────────────────────────────╯
+
+  → ls /storage/emulated/0/ ✓
+    Download/   DCIM/   Music/   Documents/
+
+  ◆  ds-v4  thought 1.2s
+  ▏ তোমার storage এ এই folder গুলো আছে:
+  ▏
+  ▏ ● Download
+  ▏ ● DCIM (photos)
+  ▏ ● Music
+  ▏ ● Documents
+
+~/  │  main  │  ◆ build  │  ds-v4    ~0.8K tok  1%
+```
+
+---
+
+## 🆓 Free Models
+
+Built-in key সহ আসে — rate limit হলে automatically পরের model-এ চলে যায়।
+
+| Model | বৈশিষ্ট্য |
+|---|---|
+| `deepseek-v4-flash-free` | **Default** — দ্রুত, smart |
+| `big-pickle` | General purpose |
+| `mimo-v2.5-free` | Code-friendly |
+| `laguna-s-2.1-free` | Balanced |
+| `ling-3.0-flash-free` | Fast replies |
+| `north-mini-code-free` | Code-focused |
+| `nemotron-3-ultra-free` | Powerful reasoning |
+
+নিজের key থাকলে: `voxel --key sk-...`
 
 ---
 
 ## ✦ Commands
 
-opencode-এর command set, aliases সহ।
-
-| Command | Aliases | কাজ |
-|---|---|---|
-| `/help` | | help dialog |
-| `/new` | `/clear` | new session |
-| `/sessions` | `/resume`, `/continue` | session list + switch |
-| `/models` | | model picker |
-| `/model <id>` | | model set |
-| `/themes` | | theme picker |
-| `/compact` | `/summarize` | session compact |
-| `/details` | | tool output show/hide |
-| `/thinking` | | reasoning block toggle |
-| `/undo` `/redo` | | last message revert / restore |
-| `/export` | | markdown export |
-| `/editor` | | `$EDITOR` তে message লেখা |
-| `/init` | | AGENTS.md তৈরি |
-| `/stats` | | token count |
-| `/key <sk-...>` | | API key set |
-| `/perm` | | permission rules |
-| `/root` | | root mode (`su -c`) |
-| `/exit` | `/quit`, `/q` | quit |
-
-**Input prefixes**
-
-| Prefix | কাজ |
+| Command | কাজ |
 |---|---|
-| `@path` | file content conversation-এ যোগ করে |
-| `!cmd` | shell command চালায়, output tool result হিসেবে আসে |
-| `\` (line শেষে) | multi-line input |
+| `/help` | সব command দেখো |
+| `/new` বা `/clear` | নতুন conversation শুরু |
+| `/sessions` | আগের conversation গুলো দেখো |
+| `/models` | model বদলাও |
+| `/themes` | theme বদলাও |
+| `/compact` | conversation ছোট করো (token বাঁচাও) |
+| `/details` | tool output দেখাও/লুকাও |
+| `/thinking` | AI reasoning দেখাও/লুকাও |
+| `/undo` / `/redo` | last message ফেরত নাও |
+| `/export` | markdown file-এ save করো |
+| `/stats` | কত token খরচ হলো |
+| `/key sk-...` | নিজের API key set করো |
+| `/root` | root mode চালু/বন্ধ |
+| `/exit` | বেরিয়ে যাও |
 
----
+**Special input:**
 
-## ⌨ Keybinds
-
-`ctrl+x` হলো leader key (opencode default), timeout 2s। Leader চাপলে which-key
-overlay দেখাবে।
-
-| Key | কাজ |
+| লিখলে | কী হয় |
 |---|---|
-| `ctrl+x q` | quit |
-| `ctrl+x n` | new session |
-| `ctrl+x l` | session list |
-| `ctrl+x m` | model list |
-| `ctrl+x t` | theme list |
-| `ctrl+x e` | editor |
-| `ctrl+x c` | compact |
-| `ctrl+x x` | export |
-| `ctrl+x u` / `ctrl+x r` | undo / redo |
-| `ctrl+x y` | copy last reply |
-| `ctrl+x d` | tool details toggle |
-| `ctrl+p` | command palette |
-| `ctrl+t` | cycle model |
-| `ctrl+r` | rename session |
-| `ctrl+d` | delete session |
-| `Tab` / `shift+Tab` | agent cycle (plan ⇄ build) |
-| `Esc` | interrupt stream / close dialog |
-| `pgup` / `pgdn` | scroll messages |
-| `ctrl+a` / `ctrl+e` | line start / end |
-| `ctrl+u` / `ctrl+k` | delete to start / end |
-| `ctrl+w` | delete word back |
-| `↑` / `↓` | input history |
+| `@/path/to/file` | সেই file টা conversation-এ যোগ হয় |
+| `!command` | shell command চালায়, output দেখায় |
+| `\` (line-এর শেষে) | পরের line-এ continue করো |
 
 ---
 
-## ◇ Modes
+## ⌨ Keyboard Shortcuts
 
-`Tab` দিয়ে toggle:
+`Ctrl+X` চাপলে shortcut menu দেখাবে।
 
-- **build** (blue) — AI file লিখতে ও command চালাতে পারে
-- **plan** (green) — শুধু analyze; `run`/`write` block করা থাকে, `read`/`ls`/`search` চলে
+| Shortcut | কাজ |
+|---|---|
+| `Ctrl+X` তারপর `Q` | বেরিয়ে যাও |
+| `Ctrl+X` তারপর `N` | নতুন session |
+| `Ctrl+X` তারপর `L` | session list |
+| `Ctrl+X` তারপর `M` | model list |
+| `Ctrl+X` তারপর `T` | theme list |
+| `Ctrl+X` তারপর `Y` | last reply copy করো |
+| `Ctrl+P` | command palette |
+| `Ctrl+T` | পরের model-এ যাও |
+| `Tab` | Plan ⇄ Build mode switch |
+| `Esc` | AI বন্ধ করো / dialog বন্ধ করো |
+| `PgUp` / `PgDn` | scroll করো |
+| `↑` / `↓` | আগের message গুলো দেখো |
 
 ---
 
-## 🤖 Tools
+## ◇ দুটো Mode
 
-AI নিজে থেকেই এগুলো use করে:
+`Tab` চেপে switch করো:
+
+- 🔵 **build mode** — AI file লিখতে ও command চালাতে পারে *(default)*
+- 🟢 **plan mode** — শুধু analyze করে, কিছু execute করে না
+
+---
+
+## 🤖 AI কী কী করতে পারে
+
+AI নিজে থেকেই এই tools use করে:
 
 | Tool | কাজ | Permission |
 |---|---|---|
-| `<run>cmd</run>` | shell command | prompt |
-| `<write path="…">` | file লেখা | prompt |
-| `<read path="…">` | file পড়া | auto |
-| `<ls>dir</ls>` | folder list | auto |
-| `<search>q</search>` | DuckDuckGo search | auto |
+| `<run>` | যেকোনো shell command চালায় | তোমার permission লাগবে |
+| `<write>` | file তৈরি বা edit করে | তোমার permission লাগবে |
+| `<read>` | file পড়ে | automatic |
+| `<ls>` | folder-এর list দেখে | automatic |
+| `<search>` | internet-এ search করে | automatic |
 
-Permission prompt-এ চারটা option: **once · session · always · reject**।
-Rule set করতে: `/perm cmd add 'rm' deny`
+Permission চাইলে ৪টা option থাকে: **once · session · always · reject**
 
-**Storage** — `~`, `/sdcard`, `storage` — সব auto-correct হয়ে
-`/storage/emulated/0/` হয়ে যায়, তাই Termux home আর shared storage মেশে না।
+> **Storage shortcut:** `storage`, `sdcard`, `~/storage` — সব লিখলে automatically `/storage/emulated/0/` হয়ে যায়।
 
 ---
 
 ## 🎨 Themes
 
-`opencode` (default) · `tokyonight` · `gruvbox` · `catppuccin` · `nord` · `mono`
+```bash
+voxel --theme tokyonight   # Tokyo Night
+voxel --theme gruvbox      # Gruvbox
+voxel --theme catppuccin   # Catppuccin
+voxel --theme nord         # Nord
+voxel --theme mono         # Monochrome
+voxel --theme opencode     # Default
+```
+
+অথবা চলতে চলতে `/themes` command দাও।
+
+---
+
+## 🔧 Startup Flags
 
 ```bash
-voxel --theme gruvbox
+voxel                    # normal TUI mode
+voxel --plain            # simple text mode (pipe বা dumb terminal-এ)
+voxel --safe-fonts       # unicode সমস্যা হলে ASCII use করবে
+voxel --models           # available model list দেখো
+voxel --theme nord       # নির্দিষ্ট theme দিয়ে চালু করো
+voxel --key sk-...       # API key save করো
 ```
 
 ---
 
-## 🆓 Models (OpenCode Zen)
+## 📁 Files
 
-Built-in key সহ আসে। Rate limit হলে automatically পরের free model-এ fallback হয়।
-
-`deepseek-v4-flash-free` (default) · `big-pickle` · `mimo-v2.5-free` ·
-`laguna-s-2.1-free` · `ling-3.0-flash-free` · `north-mini-code-free` ·
-`nemotron-3-ultra-free`
-
-নিজের key: `voxel --key sk-...`
+| Path | কী আছে |
+|---|---|
+| `~/.voxel/config.json` | settings |
+| `~/.voxel/sessions/` | conversation history |
+| `~/.voxel/export-*.md` | exported conversations |
 
 ---
 
-## 🔧 Flags
+## ⚠️ কিছু জানার কথা
 
+- Free model-এ rate limit আছে — limit হলে automatically পরের model-এ চলে যায়
+- `run` ও `write` tool-এ সবসময় permission চাইবে — `always` দিলে আর চাইবে না
+- Termux-এ storage access না থাকলে: `termux-setup-storage` run করো
+
+---
+
+## ❓ সমস্যা হলে
+
+**`voxel` command পাওয়া যাচ্ছে না:**
 ```bash
-python3 voxel.py                 # TUI
-python3 voxel.py --plain         # no-TUI fallback (pipes, dumb terminals)
-python3 voxel.py --safe-fonts    # ASCII glyphs, broken unicode font হলে
-python3 voxel.py --models        # live model list
-python3 voxel.py --theme nord
-python3 voxel.py --key sk-...
+source ~/.bashrc
 ```
 
-Session ফাইল থাকে `~/.voxel/sessions/`, config `~/.voxel/config.json`।
-পুরনো `~/.bangbot/chats` প্রথম run-এ auto migrate হয়ে যায়।
+**Screen ঠিকমতো দেখাচ্ছে না:**
+```bash
+voxel --safe-fonts
+```
 
----
-
-## ⚠ Notes
-
-- Free model-এ rate limit আছে — limit হলে fallback হয়, নাহলে কিছুক্ষণ wait
-- Repo-তে embedded API key আছে; নিজের key use করলে `/key` দাও
-- `run`/`write` সবসময় permission চায় (always দিলে আর চাইবে না)
+**নতুন করে install করতে:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/moradgamer802-cell/voxel-ai/main/install.sh | bash
+source ~/.bashrc
+```
 
 ---
 
 ## 📄 License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — free to use, modify and share.
