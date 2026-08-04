@@ -1065,15 +1065,19 @@ def _line(text):
 
 
 def render_frame(lines, W, H):
-    """Atomically paint the full screen."""
-    out = [HIDE_CUR, CLEAR]
+    """Paint the full screen without a full-clear black flash.
+    Moves cursor to home then overwrites line-by-line; any leftover
+    lines from a previous (taller) frame are erased by the trailing ESC[J."""
+    out = [HIDE_CUR, "\x1b[H"]   # hide cursor + move to top-left (no CLEAR)
     for ln in lines[:H]:
         # pad/clip to exact terminal width so no line wraps
         vis = dlen(ANSI_RE.sub("", ln))
         if vis < W:
             ln = ln + " " * (W - vis)
         out.append(safeify(ln))
-    sys.stdout.write("\n".join(out))
+    content = "\n".join(out)
+    content += "\x1b[J"          # erase from cursor to end of screen
+    sys.stdout.write(content)
     sys.stdout.flush()
 
 
@@ -1748,9 +1752,20 @@ class App:
                 body.append("")
 
         # live streaming block
-        if self.streaming and self.acc:
-            body += render_assistant_msg(self.acc, W, self.model, "",
-                                         self.think_secs, [], False)
+        if self.streaming:
+            if self.acc:
+                body += render_assistant_msg(self.acc, W, self.model, "",
+                                             self.think_secs, [], False)
+                # if the streamed content is only tool tags (no prose yet),
+                # show the pending tool calls so the screen isn't blank
+                if not TOOL_RE.sub("", self.acc).strip():
+                    for tname, tattrs, tcontent in parse_tools(self.acc):
+                        targ = tool_arg(tname, tattrs, tcontent)
+                        body.append("  " + _tool_line(tname, targ, ""))
+            else:
+                # reasoning/thinking phase — model hasn't sent content yet
+                body.append("  " + _c("accent") + G.diamond + RESET
+                            + "  " + DIM + _c("muted") + "thinking\u2026" + RESET)
 
         body += self._notice_lines()
 
