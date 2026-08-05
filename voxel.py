@@ -199,6 +199,29 @@ TOOL_RE = re.compile(
 ATTR_RE = re.compile(r"(\w+)(?:=\"([^\"]*)\")?")
 STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 
+def mask_write_code(text):
+    """Strip file contents from <write> tags for on-screen display.
+
+    TOOL_RE only matches a COMPLETE <write>...</write> pair. While the
+    model is still streaming, the closing tag hasn't arrived yet, so the
+    half-open <write>...</write> would render as raw prose. This masks
+    both cases so written code never shows on screen.
+    """
+    out = []
+    i = 0
+    while i < len(text):
+        o = text.find("<write", i)
+        if o < 0:
+            out.append(text[i:])
+            break
+        out.append(text[i:o])
+        c = text.find("</write>", o)
+        if c < 0:
+            # unterminated write tag — drop everything from here on
+            break
+        i = c + len("</write>")
+    return "".join(out)
+
 MODEL_FAIL = {}
 ui = None
 
@@ -1776,11 +1799,24 @@ class App:
         # live streaming block
         if self.streaming:
             if self.acc:
-                body += render_assistant_msg(self.acc, W, self.model, "",
+                # mask half-open <write>... content so code never flashes
+                # on screen while the closing tag is still streaming
+                disp_acc = mask_write_code(self.acc)
+                body += render_assistant_msg(disp_acc, W, self.model, "",
                                              self.think_secs, [], False)
                 # if the streamed content is only tool tags (no prose yet),
                 # show the pending tool calls so the screen isn't blank
-                if not TOOL_RE.sub("", self.acc).strip():
+                if not TOOL_RE.sub("", disp_acc).strip() or \
+                        self.acc.count("<write") > self.acc.count("</write>"):
+                    partial = None
+                    if self.acc.count("<write") > self.acc.count("</write>"):
+                        pm = re.search(r"<write\b([^>]*)>", self.acc)
+                        path = ""
+                        if pm and pm.group(1).strip():
+                            am = re.search(r'path="([^"]*)"', pm.group(1))
+                            if am:
+                                path = am.group(1)
+                        partial = "write " + one_line(path, 40) if path else "write"
                     for tname, tattrs, tcontent in parse_tools(self.acc):
                         targ = tool_arg(tname, tattrs, tcontent)
                         if tname == "write":
@@ -1794,6 +1830,15 @@ class App:
                                         + RESET)
                         else:
                             body.append("  " + _tool_line(tname, targ, ""))
+                    if partial:
+                        dots = "." * (self.spin % 4)
+                        body.append("  " + _tool_line(*partial.split(None, 1))
+                                    if " " in partial
+                                    else "  " + _tool_line("write", "", ""))
+                        body.append("  " + _c("muted") + G.bar + RESET
+                                    + " " + DIM + _c("muted")
+                                    + "writing" + dots + " " * (3 - len(dots))
+                                    + RESET)
             else:
                 # reasoning/thinking phase — model hasn't sent content yet
                 body.append("  " + _c("accent") + G.diamond + RESET
