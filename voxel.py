@@ -1110,7 +1110,7 @@ def _tool_line(name, arg, status="", meta=None):
     return base
 
 
-def _diff_lines(diff, W, limit=40):
+def _diff_lines(diff, W, limit=400):
     """Unified diff, indented under its tool line, with line numbers."""
     out = []
     for kind, old_n, new_n, text in diff[:limit]:
@@ -1782,6 +1782,16 @@ class App:
                     for tname, tattrs, tcontent in parse_tools(self.acc):
                         targ = tool_arg(tname, tattrs, tcontent)
                         body.append("  " + _tool_line(tname, targ, ""))
+                        if tname == "write" and tcontent:
+                            # live preview of the code being written
+                            body.append("  " + _c("accent") + G.bar + RESET
+                                        + " " + _c("dim") + G.h * 2 + " "
+                                        + _c("accent") + targ + RESET)
+                            for cln in tcontent.split("\n")[:24]:
+                                body.append("  " + _c("accent") + G.bar + RESET
+                                            + " " + _c("accent")
+                                            + clip(cln, max(8, W - 8)) + RESET)
+                            body.append("  " + _c("accent") + G.bar + RESET)
             else:
                 # reasoning/thinking phase — model hasn't sent content yet
                 body.append("  " + _c("accent") + G.diamond + RESET
