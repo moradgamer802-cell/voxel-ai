@@ -1067,17 +1067,22 @@ def _line(text):
 def render_frame(lines, W, H):
     """Paint the full screen without a full-clear black flash.
     Moves cursor to home then overwrites line-by-line; any leftover
-    lines from a previous (taller) frame are erased by the trailing ESC[J."""
-    out = [HIDE_CUR, "\x1b[H"]   # hide cursor + move to top-left (no CLEAR)
+    lines from a previous (taller) frame are erased by the trailing ESC[J.
+
+    NOTE: '\n' is NOT enough to start a new line in raw mode (OPOST is
+    off, so LF alone won't return the cursor to column 0). Every line
+    must end with '\r\n' or the frame slides and flags black/garbage.
+    """
+    sys.stdout.write(HIDE_CUR + "\x1b[H")   # hide cursor + move to top-left
+    frame = []
     for ln in lines[:H]:
         # pad/clip to exact terminal width so no line wraps
         vis = dlen(ANSI_RE.sub("", ln))
         if vis < W:
             ln = ln + " " * (W - vis)
-        out.append(safeify(ln))
-    content = "\n".join(out)
-    content += "\x1b[J"          # erase from cursor to end of screen
-    sys.stdout.write(content)
+        frame.append(safeify(ln))
+    sys.stdout.write("\r\n".join(frame))
+    sys.stdout.write("\x1b[J")              # erase from cursor to end of screen
     sys.stdout.flush()
 
 
@@ -2659,8 +2664,8 @@ class App:
                 # only count tokens added since the previous round to avoid
                 # double-counting the growing conversation history
                 total_in = sum(len(m["content"]) for m in wire)
-                self.session.tokens["in"] += est_tokens(
-                    max(0, total_in - counted_in))
+                new_chars = max(0, total_in - counted_in)
+                self.session.tokens["in"] += max(1, new_chars // 4)
                 counted_in = total_in
                 self.session.tokens["out"] += est_tokens(reply)
                 self.session.messages.append(
