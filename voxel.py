@@ -2592,6 +2592,9 @@ class App:
 
     def run_turn(self):
         """Drive rounds of model call -> tool exec -> model call until done."""
+        self.cancel = False     # stale cancel from a previous turn must not
+                                # instantly kill this one (it is reset again
+                                # at the top of stream_reply)
         turn_start = time.time()
         exec_count = 0
         tool_sigs = []
