@@ -1243,6 +1243,8 @@ def render_assistant_msg(text, W, model="", ts="", think_s=None,
         arg = tm.get("arg", "")
         status = "err" if tm.get("error") else ("denied" if tm.get("denied") else "ok")
         out.append("  " + _tool_line(name, arg, status))
+        if name == "write":
+            continue        # written code stays in the background — no diff in UI
         if show_details and tm.get("output") and not tm.get("denied"):
             for ln in wrap_text(truncate(tm["output"], 300), W - 6)[:6]:
                 out.append("    " + DIM + _c("muted") + ln + RESET)
@@ -1781,17 +1783,17 @@ class App:
                 if not TOOL_RE.sub("", self.acc).strip():
                     for tname, tattrs, tcontent in parse_tools(self.acc):
                         targ = tool_arg(tname, tattrs, tcontent)
-                        body.append("  " + _tool_line(tname, targ, ""))
-                        if tname == "write" and tcontent:
-                            # live preview of the code being written
-                            body.append("  " + _c("accent") + G.bar + RESET
-                                        + " " + _c("dim") + G.h * 2 + " "
-                                        + _c("accent") + targ + RESET)
-                            for cln in tcontent.split("\n")[:24]:
-                                body.append("  " + _c("accent") + G.bar + RESET
-                                            + " " + _c("accent")
-                                            + clip(cln, max(8, W - 8)) + RESET)
-                            body.append("  " + _c("accent") + G.bar + RESET)
+                        if tname == "write":
+                            # writing files stays in the background: just show
+                            # a small loading indicator, not the code itself
+                            dots = "." * (self.spin % 4)
+                            body.append("  " + _tool_line(tname, targ, ""))
+                            body.append("  " + _c("muted") + G.bar + RESET
+                                        + " " + DIM + _c("muted")
+                                        + "writing" + dots + " " * (3 - len(dots))
+                                        + RESET)
+                        else:
+                            body.append("  " + _tool_line(tname, targ, ""))
             else:
                 # reasoning/thinking phase — model hasn't sent content yet
                 body.append("  " + _c("accent") + G.diamond + RESET
