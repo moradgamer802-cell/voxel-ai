@@ -1293,28 +1293,36 @@ def render_editor_box(buf, W, mode="build", cursor_on=True, placeholder=""):
     bar_w = max(8, W - 4)
     inner_w = bar_w - 4          # "│ ❯ " prefix and trailing " │"
 
+    hint = _c("dim") + "ctrl+p menu" + RESET
+    hint_w = dlen(ANSI_RE.sub("", hint))
+    show_hint = inner_w >= hint_w + 10   # keep room for the prompt text
+    clip_at = max(0, inner_w - hint_w - 1 if show_hint else inner_w)
+
     # show the tail of the buffer (what you're typing stays visible)
+    cur = (_c("accent") + G.cursor + RESET) if cursor_on else ""
+    cur_w = 1 if cursor_on else 0
+    body_area = max(0, clip_at)
     disp = buf.replace("\n", " ")
-    if dlen(disp) > inner_w:
-        while dlen(disp) > inner_w - 1:
+    clip_to = max(0, body_area - cur_w - 1)   # room for cursor + ellipsis
+    if dlen(disp) > clip_to:
+        while disp and dlen(disp) > clip_to:
             disp = disp[1:]
         disp = G.ellipsis + disp
 
-    cur = (_c("accent") + G.cursor + RESET) if cursor_on else ""
-    cur_w = 1 if cursor_on else 0
     if disp:
         body = _c("text") + disp + RESET + cur
         used = dlen(disp) + cur_w
     else:
-        ph = clip(placeholder or "Type a message…", inner_w - cur_w)
+        ph = clip(placeholder or "Type a message…", body_area - cur_w)
         body = _c("muted") + ph + RESET + cur
         used = dlen(ph) + cur_w
-    pad = " " * max(0, inner_w - used)
+    pad = " " * max(0, body_area - used)
 
+    hint_part = (" " + hint + " ") if show_hint else " "
     return [
         "  " + color + G.tl + G.h * bar_w + G.tr + RESET,
         "  " + color + G.v + RESET + " " + _c("accent") + G.prompt + RESET
-        + " " + body + pad + " " + color + G.v + RESET,
+        + " " + body + pad + hint_part + color + G.v + RESET,
         "  " + color + G.bl + G.h * bar_w + G.br + RESET,
     ]
 
