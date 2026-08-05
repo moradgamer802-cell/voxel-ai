@@ -787,7 +787,9 @@ def exec_tool(cfg, name, arg, content, session_perm, auto=False, root=False):
                     pass
             with open(arg, "w") as f:
                 f.write(content)
-            meta = {"path": arg, "existed": existed}
+            meta = {"path": arg, "existed": existed,
+                    "lines": content.count("\n") + 1,
+                    "chars": len(content)}
             if old != content:
                 meta["diff"] = make_diff_lines(old, content)
             return "[tool write %s]: saved %d chars" % (arg, len(content)), meta
@@ -1267,7 +1269,21 @@ def render_assistant_msg(text, W, model="", ts="", think_s=None,
         status = "err" if tm.get("error") else ("denied" if tm.get("denied") else "ok")
         out.append("  " + _tool_line(name, arg, status))
         if name == "write":
-            continue        # written code stays in the background — no diff in UI
+            # written code stays collapsed in the background — show only a
+            # one-line summary (+added -removed lines), never the code itself
+            if tm.get("diff") and not tm.get("denied"):
+                add = sum(1 for k, *_ in tm["diff"] if k == "+")
+                rem = sum(1 for k, *_ in tm["diff"] if k == "-")
+                parts = []
+                if add:
+                    parts.append("+%d" % add)
+                if rem:
+                    parts.append("-%d" % rem)
+                stats = " ".join(parts) or "0"
+                out.append("    " + DIM + _c("muted") + stats
+                           + " lines (collapsed, code stays in background)"
+                           + RESET)
+            continue
         if show_details and tm.get("output") and not tm.get("denied"):
             for ln in wrap_text(truncate(tm["output"], 300), W - 6)[:6]:
                 out.append("    " + DIM + _c("muted") + ln + RESET)
@@ -1503,16 +1519,21 @@ def render_help(W):
     return _box(lines, W, "help", _c("border"))
 
 
-def render_model_picker(models, sel, W):
+def render_model_picker(models, sel, W, custom=None):
+    """models: list of model ids. custom: set of ids not in the built-in list."""
+    custom = custom or set()
     lines = []
     for i, m in enumerate(models):
+        tag = " " + _c("dim") + "(custom)" + RESET if m in custom else ""
         if i == sel:
             lines.append(_c("accent") + G.diamond + " " + RESET
-                         + _c("text") + BOLD + m + RESET)
+                         + _c("text") + BOLD + m + RESET + tag)
         else:
-            lines.append("  " + _c("muted") + m + RESET)
+            lines.append("  " + _c("muted") + m + RESET + tag)
     lines.append("")
-    lines.append(_c("dim") + "  ↑↓ select  Enter confirm  Esc cancel" + RESET)
+    lines.append(_c("dim")
+                 + "  ↑↓ select  Enter confirm  Esc cancel   /model <id> custom"
+                 + RESET)
     return _box(lines, W, "models", _c("border"))
 
 
@@ -1872,7 +1893,8 @@ class App:
         elif self.overlay == "whichkey":
             box = render_which_key(self.W)
         elif self.overlay == "models":
-            box = render_model_picker(self._models(), self.sel, self.W)
+            box = render_model_picker(self._models(), self.sel, self.W,
+                                      set(self.cfg.get("custom_models", [])))
         elif self.overlay == "themes":
             box = render_theme_picker(self.sel, self.W)
         elif self.overlay == "sessions":
@@ -1902,7 +1924,12 @@ class App:
         return out
 
     def _models(self):
-        return FREE_MODELS
+        # free list + any custom models the user has set via /model <id>
+        models = list(FREE_MODELS)
+        for m in self.cfg.get("custom_models", []):
+            if m and m not in models:
+                models.append(m)
+        return models
 
     def do_action(self, action):
         if action == "exit":
@@ -2270,6 +2297,11 @@ class App:
         self.model = model
         self.cfg["model"] = model
         self.session.model = model
+        if model and model not in FREE_MODELS:
+            # remember custom model ids so they show up in the picker
+            cm = self.cfg.setdefault("custom_models", [])
+            if model not in cm:
+                cm.append(model)
         save_config(self.cfg)
         self.notice("info", "model: " + model)
 
@@ -2709,7 +2741,8 @@ class App:
         if self.overlay == "help":
             box = render_help(76)
         elif self.overlay == "models":
-            box = render_model_picker(self._models(), self.sel, 76)
+            box = render_model_picker(self._models(), self.sel, 76,
+                                      set(self.cfg.get("custom_models", [])))
         elif self.overlay == "themes":
             box = render_theme_picker(self.sel, 76)
         elif self.overlay == "sessions":
