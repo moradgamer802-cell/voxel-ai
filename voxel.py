@@ -222,6 +222,41 @@ def mask_write_code(text):
         i = c + len("</write>")
     return "".join(out)
 
+_RE_THINK_TAG = re.compile(r"<(/)?thinking(?:\s[^>]*)?>", re.I)
+
+def strip_thinking(text):
+    """Remove inline ``<thinking>...</thinking>`` reasoning blocks from
+    assistant prose.
+
+    Some DeepSeek-style proxies stream the model's chain-of-thought inline
+    inside the ``content`` delta as ``<thinking>...</thinking>`` markup rather
+    than a separate field. Left in, that reasoning text renders mid-reply
+    (a "thinking loop" on screen) and hides the real answer. We strip whole
+    thinking blocks after tool tags have already been removed, so a literal
+    ``<thinking>`` that legitimately lives inside a file payload is never
+    touched.
+    """
+    kept = []
+    depth = 0
+    last = 0
+    for m in _RE_THINK_TAG.finditer(text):
+        if m.group(1):              # closing tag </thinking>
+            if depth > 0:
+                depth -= 1
+                last = m.end()      # drop the thinking content up to here
+            else:
+                # orphan closing tag — just drop the tag itself
+                kept.append(text[last:m.start()])
+                last = m.end()
+        else:                       # opening tag <thinking ...>
+            if depth == 0:
+                kept.append(text[last:m.start()])
+            depth += 1
+            last = m.end()
+    if depth == 0:
+        kept.append(text[last:])
+    return "".join(kept)
+
 MODEL_FAIL = {}
 ui = None
 
@@ -1295,8 +1330,9 @@ def render_assistant_msg(text, W, model="", ts="", think_s=None,
             for ln in _diff_lines(tm["diff"], W - 6):
                 out.append("    " + ln)
 
-    # strip tool tags from prose
+    # strip tool tags from prose, then drop any inline <thinking> blocks
     prose = TOOL_RE.sub("", text).strip()
+    prose = strip_thinking(prose).strip()
     if not prose:
         return out
 
@@ -1524,7 +1560,7 @@ def render_help(W):
         _c("muted") + "  /undo  /redo          " + RESET + "undo/redo last message",
         _c("muted") + "  /export               " + RESET + "export to markdown",
         _c("muted") + "  /key <sk-...>         " + RESET + "set API key",
-        _c("muted") + "  /model <id>           " + RESET + "set model",
+        _c("muted") + "  /model <id>           " + RESET + "set model (any id — e.g. claude-3-7, gpt-4o, ollama/qwen3)",
         _c("muted") + "  /stats                " + RESET + "token count",
         _c("muted") + "  /exit /quit /q        " + RESET + "quit",
         "",
@@ -1926,8 +1962,9 @@ class App:
         elif self.overlay == "whichkey":
             box = render_which_key(self.W)
         elif self.overlay == "models":
-            box = render_model_picker(self._models(), self.sel, self.W,
-                                      set(self.cfg.get("custom_models", [])))
+            models = self._models()
+            box = render_model_picker(models, self.sel, self.W,
+                                      {m for m in models if m not in FREE_MODELS})
         elif self.overlay == "themes":
             box = render_theme_picker(self.sel, self.W)
         elif self.overlay == "sessions":
@@ -2703,6 +2740,7 @@ class App:
         turn_start = time.time()
         exec_count = 0
         tool_sigs = []
+        tool_only_streak = 0  # rounds with tool calls but no prose at all
 
         for _ in range(MAX_TOOL_ROUNDS):
             if self.cancel:
@@ -2750,6 +2788,20 @@ class App:
             if len(tool_sigs) >= 20 and tool_sigs[-1] == tool_sigs[-2] == tool_sigs[-3]:
                 self.notice("warn", "same tool 20x — loop stopped")
                 return
+            # guard against a thinking model running tools with no narration:
+            # several tool-only rounds in a row usually means it is stuck
+            # thinking/acting and not producing an answer.
+            prose = TOOL_RE.sub("", content).strip()
+            if tools:
+                if not prose:
+                    tool_only_streak += 1
+                else:
+                    tool_only_streak = 0
+                if tool_only_streak >= 6:
+                    self.notice("warn",
+                                "model kept acting without a final reply "
+                                "(%d tool-only rounds) — stopped" % tool_only_streak)
+                    return
             if time.time() - turn_start > TURN_TIME_BUDGET:
                 self.notice("warn", "turn time budget exceeded — stopped")
                 return
@@ -2814,8 +2866,9 @@ class App:
         if self.overlay == "help":
             box = render_help(76)
         elif self.overlay == "models":
-            box = render_model_picker(self._models(), self.sel, 76,
-                                      set(self.cfg.get("custom_models", [])))
+            models = self._models()
+            box = render_model_picker(models, self.sel, 76,
+                                      {m for m in models if m not in FREE_MODELS})
         elif self.overlay == "themes":
             box = render_theme_picker(self.sel, 76)
         elif self.overlay == "sessions":
