@@ -1602,6 +1602,7 @@ class App:
 
         self.leader = False
         self.leader_at = 0.0
+        self.home_sel = -1          # home screen session selector (-1 = none)
 
         self.streaming = False
         self.cancel = False
@@ -1703,14 +1704,21 @@ class App:
 
         recent = list_sessions(5)
         if recent and H > 18:
-            lines.append("  " + _c("muted") + "recent" + RESET)
-            for sid, title, updated, count, _ in recent:
+            lines.append("  " + _c("muted") + "recent" + RESET
+                         + _c("dim") + "  (↑↓ select · enter open)" + RESET)
+            if self.home_sel > len(recent) - 1:
+                self.home_sel = len(recent) - 1
+            for i, (sid, title, updated, count, _) in enumerate(recent):
                 when = rel_time(updated)
                 room = W - 8 - dlen(when)
                 if room < 8:
                     break
-                lines.append("  " + _c("dim") + G.ring + " " + RESET
-                             + _c("muted") + one_line(title, room) + RESET
+                active = (i == self.home_sel)
+                mark = G.diamond if active else G.ring
+                c = _c("build") if active else _c("dim")
+                t = _c("text") if active else _c("muted")
+                lines.append("  " + c + mark + " " + RESET
+                             + t + one_line(title, room) + RESET
                              + "  " + _c("dim") + when + RESET)
             lines.append("")
 
@@ -1922,6 +1930,26 @@ class App:
         if self.overlay:
             self.on_key_overlay(key)
             return
+
+        # home screen session selector: ↑↓ move, enter opens, typing clears
+        if not self.session.visible():
+            recent = list_sessions(5)
+            n = len(recent)
+            if key in ("UP", "DOWN") and n:
+                if self.home_sel < 0:
+                    self.home_sel = 0 if key == "DOWN" else n - 1
+                elif key == "UP":
+                    self.home_sel = (self.home_sel - 1) % n
+                else:
+                    self.home_sel = (self.home_sel + 1) % n
+                self.redraw()
+                return
+            if key == "ENTER" and 0 <= self.home_sel < n:
+                self.open_session(recent[self.home_sel][0])
+                self.home_sel = -1
+                return
+            if key not in ("UP", "DOWN", "ENTER") and self.home_sel >= 0:
+                self.home_sel = -1      # typing / other keys clear the selector
 
         if key == "C-x":
             self.leader = True
