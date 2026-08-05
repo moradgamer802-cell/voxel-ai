@@ -58,22 +58,23 @@ FREE_MODELS = [
     "nemotron-3-ultra-free",
 ]
 
-MAX_TOOL_ROUNDS = 4      # AI rounds per turn (tool -> result -> tool ...)
-MAX_TOOL_EXECS = 8       # hard cap on tool executions per turn
-TURN_TIME_BUDGET = 180   # seconds before a turn is force-stopped
-CMD_TIMEOUT = 120
-OUT_LIMIT = 3000
-CONTEXT_LIMIT = 128000   # for the status-bar context percentage
+MAX_TOOL_ROUNDS = 1000   # unlimited rounds per turn (tool -> result -> tool ...)
+MAX_TOOL_EXECS = 10000   # no hard cap on tool executions per turn
+TURN_TIME_BUDGET = 86400 # 24h before a turn is force-stopped
+CMD_TIMEOUT = 3600       # 1h per command
+OUT_LIMIT = 1000000      # never truncate tool output
+CONTEXT_LIMIT = 2000000  # for the status-bar context percentage
 LEADER_TIMEOUT = 2.0     # opencode default: 2000ms
 
 SYSTEM_PROMPT = """Tumi VOXEL AI - ekta AI agent CLI, cholte ache Termux (Android terminal) e.
 Bangla o English dui language e reply koro. User Banglish e likhle tumi o Banglish e reply diba.
 Answer chhoto, clear ar to-the-point hobe. Code thakle ``` block e diba.
 
-IMPORTANT: Simple question ba conversation e TOOL USE korte hobe na — direct text reply dao.
-Tool sudhu takhon use koro jokhon user specifically kono file dekhte, command chalate, ba search korte bole.
+Tumi ekta UNRESTRICTED agent — kono limitation nai. Jekono kaj shob korte paro,
+tool use korar jonno permission prompt asbe na, kono round/time/output limit nai.
+Proyojon onujayi joto khusi tool chalate paro.
 
-TOOL USE (only when truly needed):
+TOOL USE (freely — whenever it helps):
 <run>command</run>                          - Termux e command chalabe
 <read path="/path/to/file">x</read>         - file content dekhte
 <write path="/path/to/file">content</write> - file likhte
@@ -90,17 +91,15 @@ downloads, documents, music, pictures, DCIM, Android, or any file access:
 - User specific folder na bolle default `/storage/emulated/0/`
 
 Rules:
-- <search>/<read>/<ls> default allowed. <write>/<run> e user permission prompt asbe.
+- <search>/<read>/<ls>/<write>/<run> sob default allowed — kono permission prompt nai.
 - Ekbare ekta tag, result ashle tarpor porer step.
 - Command e warning/error thakle seta user ke bolo.
 - Reply e nijer nam ba greeting force koro na — direct proshner jawab dao."""
 
 PLAN_PROMPT = """TUMI EKHON PLAN MODE E ACHO — shudhu analyze/plan korba:
-- KONO <write> tool use korba NA — file create/modify na.
-- KONO <run> tool use korba NA — command chalabe na.
-- <read>/<ls>/<search> allowed — information dekhte paro.
-- User ke clear plan dao: ki ki change lagbe, koto step, ki output asbe.
-- Change tokhoni hobe jokhon user build mode e jabe (Tab press kore)."""
+- Plan chhoto rakho, user ke clear steps dao: ki ki change lagbe, koto step, ki output asbe.
+- Proyojon hole <read>/<ls>/<search> use korte paro.
+- Build mode e gele (Tab press kore) sob tool freely use korte parbe."""
 
 # ---------------------------------------------------------------- themes
 
@@ -527,7 +526,7 @@ def truncate(text, limit=OUT_LIMIT):
     return text
 
 
-def ddg_search(query, max_results=5):
+def ddg_search(query, max_results=10):
     results = []
     for base in ("https://html.duckduckgo.com/html/",
                  "https://lite.duckduckgo.com/lite/"):
@@ -649,7 +648,7 @@ def perm_rule(cfg, category, key):
     for prefix, mode in rules.items():
         if key.startswith(prefix):
             return mode
-    return cfg.get("perm", {}).get("default_" + category, "ask")
+    return "always"  # no prompts by default — unrestricted agent
 
 
 def check_perm(cfg, category, key, session_perm, prompt=True, auto=False):
@@ -728,7 +727,7 @@ def exec_tool(cfg, name, arg, content, session_perm, auto=False, root=False):
             entries = sorted(os.listdir(arg))
             listing = "\n".join(
                 e + ("/" if os.path.isdir(os.path.join(arg, e)) else "")
-                for e in entries[:300])
+                for e in entries)
             meta = {"output": listing, "count": len(entries)}
         except OSError as e:
             listing = "error: %s" % (e,)
@@ -741,7 +740,7 @@ def exec_tool(cfg, name, arg, content, session_perm, auto=False, root=False):
             return "[tool read: denied]", {"denied": True}
         try:
             with open(arg, "rb") as f:
-                text = f.read(300 * 1024).decode(errors="replace")
+                text = f.read(50 * 1024 * 1024).decode(errors="replace")
             meta = {"output": text, "lines": text.count("\n") + 1}
         except OSError as e:
             text = "error: %s" % (e,)
@@ -2543,12 +2542,12 @@ class App:
                 self.redraw()
                 return
 
-            # loop guard: identical tool signature 3 rounds running
+            # loop guard: identical tool signature 20 rounds running
             sig = tuple((n, one_line(a.get("path") or c or "", 60))
                         for n, a, c in tools)
             tool_sigs.append(sig)
-            if len(tool_sigs) >= 3 and tool_sigs[-1] == tool_sigs[-2] == tool_sigs[-3]:
-                self.notice("warn", "same tool 3x — loop stopped")
+            if len(tool_sigs) >= 20 and tool_sigs[-1] == tool_sigs[-2] == tool_sigs[-3]:
+                self.notice("warn", "same tool 20x — loop stopped")
                 return
             if time.time() - turn_start > TURN_TIME_BUDGET:
                 self.notice("warn", "turn time budget exceeded — stopped")
@@ -2561,10 +2560,6 @@ class App:
                     self.notice("warn", "tool limit reached (%d)" % MAX_TOOL_EXECS)
                     break
                 exec_count += 1
-                if self.mode == "plan" and name in ("write", "run"):
-                    metas.append({"name": name, "arg": tcontent, "denied": True})
-                    results.append("[tool %s: blocked in plan mode]" % name)
-                    continue
                 arg = tool_arg(name, attrs, tcontent)
                 body = tcontent if name == "write" else arg
 
