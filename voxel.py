@@ -929,11 +929,15 @@ CTRL_MAP = {
 }
 
 
-def _utf8_reader(fd):
+def _utf8_reader(fd, timeout=None):
     dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
-    def read_char():
+    def read_char(t=timeout):
         while True:
+            if t is not None:
+                r, _, _ = select.select([fd], [], [], t)
+                if not r:
+                    return ""
             b = os.read(fd, 1)
             if not b:
                 return ""
@@ -945,7 +949,7 @@ def _utf8_reader(fd):
 
 def _decode_csi(read_char):
     """Parse a CSI sequence body. -> token string ('' = ignore)."""
-    k = read_char()
+    k = read_char(0.05)
     simple = {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT",
               "H": "HOME", "F": "END"}
     if k in simple:
@@ -954,12 +958,12 @@ def _decode_csi(read_char):
         return "S-TAB"               # the numeric handler or it would block
     if k == "M":                      # legacy X10 mouse: 3 bytes follow
         for _ in range(3):
-            read_char()
+            read_char(0.05)
         return ""
     if k == "<":                      # SGR mouse
         params = ""
         while True:
-            c = read_char()
+            c = read_char(0.05)
             if not c or c in ("M", "m"):
                 break
             params += c
@@ -971,7 +975,7 @@ def _decode_csi(read_char):
     # numeric sequences: 5~ pgup, 6~ pgdn, 1;5C ctrl-right, 1;3D alt-left ...
     params = k
     while True:
-        c = read_char()
+        c = read_char(0.05)
         if not c or c in CSI_FINAL:
             final = c
             break
@@ -1014,21 +1018,23 @@ def raw_key():
         return CTRL_MAP.get(ch, ch)
 
     fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
+    old = None
+    if not TERM_RAW:
+        old = termios.tcgetattr(fd)
         tty.setraw(fd)
+    try:
         read_char = _utf8_reader(fd)
         ch = read_char()
         if ch == "\x1b":
             r, _, _ = select.select([fd], [], [], 0.06)
             if not r:
                 return "ESC"
-            nxt = read_char()
+            nxt = read_char(0.05)
             if nxt == "[":
                 return _decode_csi(read_char)
             if nxt == "O":
                 return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}.get(
-                    read_char(), "")
+                    read_char(0.05), "")
             if nxt == "\x7f":
                 return "M-back"
             if nxt == "\r" or nxt == "\n":
@@ -1044,15 +1050,13 @@ def raw_key():
             return "BACK"
         if ch == "\t":
             return "TAB"
-        if ch == "\x1b[Z":
-            return "S-TAB"
         if ch in CTRL_MAP:
             return CTRL_MAP[ch]
         if ch.isprintable() or ord(ch) >= 160:
             return ch
         return ""
     finally:
-        if not TERM_RAW:
+        if not TERM_RAW and old:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
@@ -1327,7 +1331,7 @@ def _short_model(model):
             else parts[0][:8])
 
 
-def render_editor_box(buf, W, mode="build", cursor_on=True, placeholder=""):
+def render_editor_box(buf, W, mode="build", cursor_on=True, placeholder="", cursor_pos=None):
     """opencode-style rounded input box, border color = current mode."""
     color = _c("plan") if mode == "plan" else _c("build")
     # 2-space gutter each side, 2 border cells -> inner content width
@@ -1339,26 +1343,51 @@ def render_editor_box(buf, W, mode="build", cursor_on=True, placeholder=""):
     show_hint = inner_w >= hint_w + 10   # keep room for the prompt text
     clip_at = max(0, inner_w - hint_w - 1 if show_hint else inner_w)
 
-    # show the tail of the buffer (what you're typing stays visible)
     cur = (_c("accent") + G.cursor + RESET) if cursor_on else ""
     cur_w = 1 if cursor_on else 0
     body_area = max(0, clip_at)
-    disp = buf.replace("\n", " ")
-    clip_to = max(0, body_area - cur_w - 1)   # room for cursor + ellipsis
-    if dlen(disp) > clip_to:
-        while disp and dlen(disp) > clip_to:
-            disp = disp[1:]
-        disp = G.ellipsis + disp
+
+    disp = buf.replace("\n", "⏎")
+    c_pos = len(disp) if cursor_pos is None else max(0, min(len(disp), cursor_pos))
 
     if disp:
-        body = _c("text") + disp + RESET + cur
-        used = dlen(disp) + cur_w
+        left = disp[:c_pos]
+        right = disp[c_pos:]
+        req_w = dlen(disp) + cur_w
+        if req_w <= body_area:
+            body = _c("text") + left + RESET + cur + _c("text") + right + RESET
+            used = req_w
+        else:
+            avail = body_area - cur_w
+            l_w = dlen(left)
+            r_w = dlen(right)
+            if l_w < avail // 2:
+                r_clip = clip(right, avail - l_w - 1)
+                body = _c("text") + left + RESET + cur + _c("text") + r_clip + RESET
+                used = l_w + cur_w + dlen(r_clip)
+            elif r_w < avail // 2:
+                l_clip = left
+                target_l = avail - r_w - 1
+                while l_clip and dlen(l_clip) > target_l:
+                    l_clip = l_clip[1:]
+                l_clip = G.ellipsis + l_clip
+                body = _c("text") + l_clip + RESET + cur + _c("text") + right + RESET
+                used = dlen(l_clip) + cur_w + r_w
+            else:
+                half = max(1, avail // 2 - 1)
+                l_clip = left
+                while l_clip and dlen(l_clip) > half:
+                    l_clip = l_clip[1:]
+                l_clip = G.ellipsis + l_clip
+                r_clip = clip(right, half)
+                body = _c("text") + l_clip + RESET + cur + _c("text") + r_clip + RESET
+                used = dlen(l_clip) + cur_w + dlen(r_clip)
     else:
         ph = clip(placeholder or "Type a message…", body_area - cur_w)
         body = _c("muted") + ph + RESET + cur
         used = dlen(ph) + cur_w
-    pad = " " * max(0, body_area - used)
 
+    pad = " " * max(0, body_area - used)
     hint_part = (" " + hint + " ") if show_hint else " "
     return [
         "  " + color + G.tl + G.h * bar_w + G.tr + RESET,
@@ -1629,6 +1658,8 @@ class App:
         self.session.model = self.model
 
         self.buf = ""
+        self.cursor = 0
+        self._draft = ""
         self.history = []
         self.hist_idx = 0
         self.scroll = 0
@@ -1780,7 +1811,8 @@ class App:
         body_max = max(1, H - len(lines) - 5)
         lines += [""] * body_max
         lines += render_editor_box(self.buf, W, self.mode, self._cursor_on(),
-                                   "Type a message, /help for commands")
+                                   "Type a message, /help for commands",
+                                   cursor_pos=self.cursor)
         lines.append(render_status_bar(self.mode, self.model, 0, 0, W,
                                        branch=self.branch))
         return self._apply_overlay(lines)
@@ -1875,7 +1907,8 @@ class App:
             self.scroll = 0
             body += [""] * (avail - len(body))
         lines += body
-        lines += render_editor_box(self.buf, W, self.mode, self._cursor_on())
+        lines += render_editor_box(self.buf, W, self.mode, self._cursor_on(),
+                                   cursor_pos=self.cursor)
         speed = 0
         if self.streaming and self.stream_start:
             el = time.time() - self.stream_start
@@ -2050,6 +2083,7 @@ class App:
         if key == "C-c":
             if self.buf:
                 self.buf = ""
+                self.cursor = 0
             else:
                 self.running = False
             return
@@ -2075,41 +2109,73 @@ class App:
             text = self.buf.strip()
             if text.endswith("\\"):          # multi-line continuation
                 self.buf = self.buf[:-1] + "\n"
+                self.cursor = len(self.buf)
                 return
             if not text:
                 return
             self.buf = ""
+            self.cursor = 0
             self.history.append(text)
             self.hist_idx = len(self.history)
             self.submit(text)
             return
+        if key == "LEFT":
+            self.cursor = max(0, self.cursor - 1)
+            return
+        if key == "RIGHT":
+            self.cursor = min(len(self.buf), self.cursor + 1)
+            return
+        if key in ("HOME", "C-a"):
+            self.cursor = 0
+            return
+        if key in ("END", "C-e"):
+            self.cursor = len(self.buf)
+            return
         if key == "BACK":
-            self.buf = self.buf[:-1]
+            if self.cursor > 0:
+                self.buf = self.buf[:self.cursor - 1] + self.buf[self.cursor:]
+                self.cursor -= 1
+            return
+        if key == "DELETE":
+            if self.cursor < len(self.buf):
+                self.buf = self.buf[:self.cursor] + self.buf[self.cursor + 1:]
             return
         if key == "C-u":
-            self.buf = ""
-            return
-        if key == "C-w":
-            self.buf = re.sub(r"\S*\s*$", "", self.buf)
+            self.buf = self.buf[self.cursor:]
+            self.cursor = 0
             return
         if key == "C-k":
-            self.buf = ""
+            self.buf = self.buf[:self.cursor]
+            return
+        if key == "C-w":
+            left = self.buf[:self.cursor]
+            right = self.buf[self.cursor:]
+            left_trimmed = re.sub(r"\S*\s*$", "", left)
+            self.cursor = len(left_trimmed)
+            self.buf = left_trimmed + right
             return
         if key == "ESC":
             self.scroll = 0
             return
-        if key in ("UP", "C-p"):
-            if self.history and self.hist_idx > 0:
-                self.hist_idx -= 1
-                self.buf = self.history[self.hist_idx]
+        if key == "UP":
+            if self.history:
+                if self.hist_idx == len(self.history):
+                    self._draft = self.buf
+                if self.hist_idx > 0:
+                    self.hist_idx -= 1
+                    self.buf = self.history[self.hist_idx]
+                    self.cursor = len(self.buf)
             return
         if key == "DOWN":
-            if self.history and self.hist_idx < len(self.history) - 1:
-                self.hist_idx += 1
-                self.buf = self.history[self.hist_idx]
-            else:
-                self.hist_idx = len(self.history)
-                self.buf = ""
+            if self.history:
+                if self.hist_idx < len(self.history) - 1:
+                    self.hist_idx += 1
+                    self.buf = self.history[self.hist_idx]
+                    self.cursor = len(self.buf)
+                elif self.hist_idx == len(self.history) - 1:
+                    self.hist_idx = len(self.history)
+                    self.buf = self._draft
+                    self.cursor = len(self.buf)
             return
         if key in ("PGUP", "WHEEL_UP"):
             self.scroll += 5
@@ -2118,10 +2184,12 @@ class App:
             self.scroll = max(0, self.scroll - 5)
             return
         if key == "M-enter":
-            self.buf += "\n"
+            self.buf = self.buf[:self.cursor] + "\n" + self.buf[self.cursor:]
+            self.cursor += 1
             return
         if len(key) == 1 and (key.isprintable() or ord(key) >= 160):
-            self.buf += key
+            self.buf = self.buf[:self.cursor] + key + self.buf[self.cursor:]
+            self.cursor += 1
 
     def on_key_overlay(self, key):
         ov = self.overlay
@@ -2269,6 +2337,7 @@ class App:
         self.model = sess.model or self.model
         self.tool_metas = {}
         self.scroll = 0
+        self.cursor = 0
         self.notices = []
 
     def cmd_new(self):
@@ -2279,6 +2348,7 @@ class App:
         self.session.model = self.model
         self.tool_metas = {}
         self.scroll = 0
+        self.cursor = 0
         self.notices = []
         self.undo_stack = []
         self.redo_stack = []
@@ -2604,9 +2674,12 @@ class App:
                     esc_armed = True
                     self.notice("warn", "press esc again to interrupt")
                 elif k == "BACK":
-                    self.buf = self.buf[:-1]
+                    if self.cursor > 0:
+                        self.buf = self.buf[:self.cursor - 1] + self.buf[self.cursor:]
+                        self.cursor -= 1
                 elif k and len(k) == 1 and k.isprintable():
-                    self.buf += k       # keep typing while it streams
+                    self.buf = self.buf[:self.cursor] + k + self.buf[self.cursor:]
+                    self.cursor += 1
         except KeyboardInterrupt:
             self.cancel = True
         finally:
@@ -2882,3 +2955,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         sys.stdout.write(MOUSE_OFF + SHOW_CUR + ALT_OFF)
         sys.exit(130)
+    except Exception:
+        sys.stdout.write(MOUSE_OFF + SHOW_CUR + ALT_OFF)
+        raise
